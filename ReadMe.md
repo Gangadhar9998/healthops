@@ -1,4 +1,4 @@
-# Medics Health Check
+# Health Check
 
 Monitoring system for app servers, APIs, processes, logs, and short-term health trends.
 
