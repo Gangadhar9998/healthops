@@ -15,17 +15,18 @@ import (
 )
 
 type Service struct {
-	cfg             *Config
-	store           Store
-	runner          *Runner
-	scheduler       *CheckScheduler
-	incidentManager *IncidentManager
-	alertEngine     *AlertRuleEngine
-	metrics         *MetricsCollector
-	logger          *log.Logger
-	auditLogger     *AuditLogger
-	mysqlAPIHandler *MySQLAPIHandler
-	aiAPIHandler    *AIAPIHandler
+	cfg                    *Config
+	store                  Store
+	runner                 *Runner
+	scheduler              *CheckScheduler
+	incidentManager        *IncidentManager
+	alertEngine            *AlertRuleEngine
+	metrics                *MetricsCollector
+	logger                 *log.Logger
+	auditLogger            *AuditLogger
+	mysqlAPIHandler        *MySQLAPIHandler
+	aiAPIHandler           *AIAPIHandler
+	notificationAPIHandler *NotificationAPIHandler
 }
 
 func NewService(cfg *Config, store Store, logger *log.Logger) *Service {
@@ -120,6 +121,11 @@ func (s *Service) SetAIAPIHandler(h *AIAPIHandler) {
 	s.aiAPIHandler = h
 }
 
+// SetNotificationAPIHandler sets the notification channel API handler for the service
+func (s *Service) SetNotificationAPIHandler(h *NotificationAPIHandler) {
+	s.notificationAPIHandler = h
+}
+
 // Runner returns the service's runner for external configuration.
 func (s *Service) Runner() *Runner {
 	return s.runner
@@ -178,6 +184,11 @@ func (s *Service) Run(ctx context.Context) error {
 	// Register AI API routes if handler is configured
 	if s.aiAPIHandler != nil {
 		s.aiAPIHandler.RegisterRoutes(mux)
+	}
+
+	// Register notification channel API routes if handler is configured
+	if s.notificationAPIHandler != nil {
+		s.notificationAPIHandler.RegisterRoutes(mux)
 	}
 
 	// Add Prometheus metrics endpoint

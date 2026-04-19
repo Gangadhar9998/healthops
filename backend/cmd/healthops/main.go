@@ -62,6 +62,20 @@ func main() {
 		logger.Printf("Warning: Failed to init notification outbox: %v", err)
 	}
 
+	// Initialize notification channel store and dispatcher
+	channelStore, err := monitoring.NewNotificationChannelStore(dataDir)
+	if err != nil {
+		logger.Printf("Warning: Failed to init notification channel store: %v", err)
+	}
+
+	var notificationDispatcher *monitoring.NotificationDispatcher
+	if channelStore != nil {
+		notificationDispatcher = monitoring.NewNotificationDispatcher(channelStore, outbox, logger)
+		notificationAPIHandler := monitoring.NewNotificationAPIHandler(channelStore, notificationDispatcher, cfg)
+		service.SetNotificationAPIHandler(notificationAPIHandler)
+		logger.Printf("Notification channels initialized")
+	}
+
 	aiQueue, err := monitoring.NewFileAIQueue(dataDir)
 	if err != nil {
 		logger.Printf("Warning: Failed to init AI queue: %v", err)
@@ -148,14 +162,26 @@ func main() {
 		}
 		service.SetAIAPIHandler(aiAPIHandler)
 
-		// Wire auto-analysis: enqueue AI analysis when incidents are created
+		// Wire auto-analysis + notifications: trigger when incidents are created
 		incidentManager.SetOnIncidentCreated(func(incident monitoring.Incident) {
 			if err := aiService.EnqueueIncidentAnalysis(incident.ID); err != nil {
 				logger.Printf("AI: failed to enqueue analysis for incident %s: %v", incident.ID, err)
 			}
+			if notificationDispatcher != nil {
+				notificationDispatcher.NotifyIncident(incident, nil)
+			}
 		})
 
 		logger.Printf("BYOK AI service initialized (background worker active)")
+	}
+
+	// If AI not configured, still wire notification dispatch for incidents
+	if aiConfigStore == nil || aiQueue == nil {
+		if notificationDispatcher != nil {
+			incidentManager.SetOnIncidentCreated(func(incident monitoring.Incident) {
+				notificationDispatcher.NotifyIncident(incident, nil)
+			})
+		}
 	}
 
 	stopRetention := make(chan struct{})
