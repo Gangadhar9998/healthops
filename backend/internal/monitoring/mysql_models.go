@@ -5,6 +5,46 @@ import (
 	"time"
 )
 
+// MySQLProcess represents a single row from SHOW FULL PROCESSLIST.
+type MySQLProcess struct {
+	ID      int64  `json:"id"`
+	User    string `json:"user"`
+	Host    string `json:"host"`
+	DB      string `json:"db"`
+	Command string `json:"command"`
+	Time    int64  `json:"time"`
+	State   string `json:"state"`
+	Info    string `json:"info"`
+}
+
+// MySQLUserStat represents per-user connection stats from performance_schema.users.
+type MySQLUserStat struct {
+	User               string `json:"user"`
+	CurrentConnections int64  `json:"currentConnections"`
+	TotalConnections   int64  `json:"totalConnections"`
+}
+
+// MySQLHostStat represents per-host connection stats from performance_schema.hosts.
+type MySQLHostStat struct {
+	Host               string `json:"host"`
+	CurrentConnections int64  `json:"currentConnections"`
+	TotalConnections   int64  `json:"totalConnections"`
+}
+
+// MySQLDigestStat represents a top query from performance_schema.events_statements_summary_by_digest.
+type MySQLDigestStat struct {
+	DigestText    string  `json:"digestText"`
+	CountStar     int64   `json:"countStar"`
+	SumTimerWait  float64 `json:"sumTimerWait"`
+	AvgTimerWait  float64 `json:"avgTimerWait"`
+	SumRowsSent   int64   `json:"sumRowsSent"`
+	SumRowsExam   int64   `json:"sumRowsExam"`
+	SumErrors     int64   `json:"sumErrors"`
+	SumWarnings   int64   `json:"sumWarnings"`
+	FirstSeen     string  `json:"firstSeen"`
+	LastSeen      string  `json:"lastSeen"`
+}
+
 // MySQLSampler collects raw MySQL metrics from a database target.
 type MySQLSampler interface {
 	Collect(ctx context.Context, check CheckConfig) (MySQLSample, error)
@@ -32,6 +72,23 @@ type MySQLSample struct {
 	CreatedTmpDiskTables int64     `json:"createdTmpDiskTables" bson:"createdTmpDiskTables"`
 	CreatedTmpTables     int64     `json:"createdTmpTables" bson:"createdTmpTables"`
 	ConnectionsRefused   int64     `json:"connectionsRefused" bson:"connectionsRefused"`
+	SelectScan           int64     `json:"selectScan" bson:"selectScan"`
+	SelectFullJoin       int64     `json:"selectFullJoin" bson:"selectFullJoin"`
+	SortMergePasses      int64     `json:"sortMergePasses" bson:"sortMergePasses"`
+	HandlerReadRndNext   int64     `json:"handlerReadRndNext" bson:"handlerReadRndNext"`
+	BufferPoolReadRequests int64   `json:"bufferPoolReadRequests" bson:"bufferPoolReadRequests"`
+	BufferPoolReads      int64     `json:"bufferPoolReads" bson:"bufferPoolReads"`
+	TableLocksWaited     int64     `json:"tableLocksWaited" bson:"tableLocksWaited"`
+	TableLocksImmediate  int64     `json:"tableLocksImmediate" bson:"tableLocksImmediate"`
+	OpenFiles            int64     `json:"openFiles" bson:"openFiles"`
+	OpenTables           int64     `json:"openTables" bson:"openTables"`
+	OpenedTables         int64     `json:"openedTables" bson:"openedTables"`
+	OpenFilesLimit       int64     `json:"openFilesLimit" bson:"openFilesLimit"`
+	TableOpenCache       int64     `json:"tableOpenCache" bson:"tableOpenCache"`
+	ProcessList          []MySQLProcess    `json:"processList,omitempty" bson:"processList,omitempty"`
+	UserStats            []MySQLUserStat   `json:"userStats,omitempty" bson:"userStats,omitempty"`
+	HostStats            []MySQLHostStat   `json:"hostStats,omitempty" bson:"hostStats,omitempty"`
+	TopQueries           []MySQLDigestStat `json:"topQueries,omitempty" bson:"topQueries,omitempty"`
 }
 
 // MySQLDelta holds the computed delta between two consecutive samples.

@@ -3,18 +3,22 @@
 .gitignore
 
 # Documentation
-*.md
 docs/
 
 # IDE
 .vscode/
 .idea/
 
-# Frontend (not needed for backend build)
-frontend/
+# Node modules (will be installed in Docker)
+frontend/node_modules/
+
+# Backend binary (build artifact)
+backend/healthmon
+
+# Data directory
+backend/data/
 
 # Docker files
-Dockerfile
 docker-compose.yml
 .dockerignore
 

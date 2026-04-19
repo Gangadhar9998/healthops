@@ -196,7 +196,7 @@ func computeResponseTimeBuckets(results []CheckResult, checkID string, period, i
 	var entries []entry
 	for i := range results {
 		r := &results[i]
-		if r.CheckID != checkID || r.StartedAt.Before(cutoff) {
+		if (checkID != "" && r.CheckID != checkID) || r.StartedAt.Before(cutoff) {
 			continue
 		}
 		entries = append(entries, entry{ts: r.StartedAt, ms: r.DurationMs})
@@ -319,10 +319,6 @@ func (s *Service) handleAnalyticsResponseTimes(w http.ResponseWriter, r *http.Re
 	}
 
 	checkID := strings.TrimSpace(r.URL.Query().Get("checkId"))
-	if checkID == "" {
-		writeAPIError(w, http.StatusBadRequest, errMissingID)
-		return
-	}
 
 	period := strings.TrimSpace(r.URL.Query().Get("period"))
 	interval := strings.TrimSpace(r.URL.Query().Get("interval"))
@@ -344,10 +340,6 @@ func (s *Service) handleAnalyticsStatusTimeline(w http.ResponseWriter, r *http.R
 	}
 
 	checkID := strings.TrimSpace(r.URL.Query().Get("checkId"))
-	if checkID == "" {
-		writeAPIError(w, http.StatusBadRequest, errMissingID)
-		return
-	}
 
 	days := queryInt(r, "days", 7)
 	cutoff := time.Now().UTC().Add(-time.Duration(days) * 24 * time.Hour)
@@ -357,7 +349,7 @@ func (s *Service) handleAnalyticsStatusTimeline(w http.ResponseWriter, r *http.R
 	var timeline []StatusTimelineEntry
 	for i := range snap.Results {
 		res := &snap.Results[i]
-		if res.CheckID != checkID || res.StartedAt.Before(cutoff) {
+		if (checkID != "" && res.CheckID != checkID) || res.StartedAt.Before(cutoff) {
 			continue
 		}
 		timeline = append(timeline, StatusTimelineEntry{

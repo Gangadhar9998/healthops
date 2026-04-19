@@ -13,17 +13,46 @@ import (
 
 // MySQLHealthSummary is a single-card summary of MySQL health.
 type MySQLHealthSummary struct {
-	CheckID               string    `json:"checkId"`
-	Timestamp             time.Time `json:"timestamp"`
-	ConnectionUtilPct     float64   `json:"connectionUtilPct"`
-	ThreadsRunning        int64     `json:"threadsRunning"`
-	QueriesPerSec         float64   `json:"queriesPerSec"`
-	SlowQueriesPerSec     float64   `json:"slowQueriesPerSec"`
-	RowLockWaitsPerSec    float64   `json:"rowLockWaitsPerSec"`
-	TmpDiskTablesPct      float64   `json:"tmpDiskTablesPct"`
-	AbortedConnectsPerSec float64   `json:"abortedConnectsPerSec"`
-	UptimeSeconds         int64     `json:"uptimeSeconds"`
-	Status                string    `json:"status"` // "healthy", "warning", "critical"
+	CheckID               string            `json:"checkId"`
+	Timestamp             time.Time         `json:"timestamp"`
+	ConnectionUtilPct     float64           `json:"connectionUtilPct"`
+	Connections           int64             `json:"connections"`
+	MaxConnections        int64             `json:"maxConnections"`
+	ThreadsRunning        int64             `json:"threadsRunning"`
+	QueriesPerSec         float64           `json:"queriesPerSec"`
+	SlowQueries           float64           `json:"slowQueries"`
+	SlowQueriesPerSec     float64           `json:"slowQueriesPerSec"`
+	RowLockWaitsPerSec    float64           `json:"rowLockWaitsPerSec"`
+	TmpDiskTablesPct      float64           `json:"tmpDiskTablesPct"`
+	AbortedConnectsPerSec float64           `json:"abortedConnectsPerSec"`
+	UptimeSeconds         int64             `json:"uptimeSeconds"`
+	Uptime                int64             `json:"uptime"`
+	Status                string            `json:"status"` // "healthy", "warning", "critical"
+	LastSampleAt          time.Time         `json:"lastSampleAt"`
+	ProcessList           []MySQLProcess    `json:"processList,omitempty"`
+	UserStats             []MySQLUserStat   `json:"userStats,omitempty"`
+	HostStats             []MySQLHostStat   `json:"hostStats,omitempty"`
+	TopQueries            []MySQLDigestStat `json:"topQueries,omitempty"`
+	TotalSlowQueries      int64             `json:"totalSlowQueries"`
+	AbortedConnects       int64             `json:"abortedConnects"`
+	AbortedClients        int64             `json:"abortedClients"`
+	MaxUsedConnections    int64             `json:"maxUsedConnections"`
+	InnoDBRowLockWaits    int64             `json:"innodbRowLockWaits"`
+	InnoDBRowLockTime     int64             `json:"innodbRowLockTime"`
+	Questions             int64             `json:"questions"`
+	// Additional performance stats
+	SelectScan             int64   `json:"selectScan"`
+	SelectFullJoin         int64   `json:"selectFullJoin"`
+	SortMergePasses        int64   `json:"sortMergePasses"`
+	TableLocksWaited       int64   `json:"tableLocksWaited"`
+	TableLocksImmediate    int64   `json:"tableLocksImmediate"`
+	BufferPoolHitRate      float64 `json:"bufferPoolHitRate"`
+	OpenFiles              int64   `json:"openFiles"`
+	OpenFilesLimit         int64   `json:"openFilesLimit"`
+	OpenTables             int64   `json:"openTables"`
+	TableOpenCache         int64   `json:"tableOpenCache"`
+	OpenedTables           int64   `json:"openedTables"`
+	ConnectionsRefused     int64   `json:"connectionsRefused"`
 }
 
 // MySQLTimeSeriesPoint for charting MySQL metrics over time.
@@ -103,6 +132,9 @@ func (h *MySQLAPIHandler) handleMySQLHealthSummary(w http.ResponseWriter, r *htt
 
 	checkID := strings.TrimSpace(r.URL.Query().Get("checkId"))
 	if checkID == "" {
+		checkID = h.firstMySQLCheckID()
+	}
+	if checkID == "" {
 		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("checkId is required"))
 		return
 	}
@@ -132,18 +164,51 @@ func (h *MySQLAPIHandler) handleMySQLHealthSummary(w http.ResponseWriter, r *htt
 	}
 
 	summary := MySQLHealthSummary{
-		CheckID:           checkID,
-		Timestamp:         sample.Timestamp,
-		ConnectionUtilPct: connUtilPct,
-		ThreadsRunning:    sample.ThreadsRunning,
-		QueriesPerSec:     sample.QuestionsPerSec,
-		UptimeSeconds:     sample.UptimeSeconds,
-		Status:            status,
+		CheckID:            checkID,
+		Timestamp:          sample.Timestamp,
+		ConnectionUtilPct:  connUtilPct,
+		Connections:        sample.Connections,
+		MaxConnections:     sample.MaxConnections,
+		ThreadsRunning:     sample.ThreadsRunning,
+		QueriesPerSec:      sample.QuestionsPerSec,
+		UptimeSeconds:      sample.UptimeSeconds,
+		Uptime:             sample.UptimeSeconds,
+		Status:             status,
+		LastSampleAt:       sample.Timestamp,
+		ProcessList:        sample.ProcessList,
+		UserStats:          sample.UserStats,
+		HostStats:          sample.HostStats,
+		TopQueries:         sample.TopQueries,
+		TotalSlowQueries:   sample.SlowQueries,
+		AbortedConnects:    sample.AbortedConnects,
+		AbortedClients:     sample.AbortedClients,
+		MaxUsedConnections: sample.MaxUsedConnections,
+		InnoDBRowLockWaits: sample.InnoDBRowLockWaits,
+		InnoDBRowLockTime:  sample.InnoDBRowLockTime,
+		Questions:          sample.Questions,
+		// Additional performance stats
+		SelectScan:          sample.SelectScan,
+		SelectFullJoin:      sample.SelectFullJoin,
+		SortMergePasses:     sample.SortMergePasses,
+		TableLocksWaited:    sample.TableLocksWaited,
+		TableLocksImmediate: sample.TableLocksImmediate,
+		OpenFiles:           sample.OpenFiles,
+		OpenFilesLimit:      sample.OpenFilesLimit,
+		OpenTables:          sample.OpenTables,
+		TableOpenCache:      sample.TableOpenCache,
+		OpenedTables:        sample.OpenedTables,
+		ConnectionsRefused:  sample.ConnectionsRefused,
+	}
+
+	// Buffer pool hit rate
+	if sample.BufferPoolReadRequests > 0 {
+		summary.BufferPoolHitRate = math.Round((1.0-float64(sample.BufferPoolReads)/float64(sample.BufferPoolReadRequests))*10000) / 100
 	}
 
 	if len(deltas) > 0 {
 		d := deltas[0]
 		summary.SlowQueriesPerSec = d.SlowQueriesPerSec
+		summary.SlowQueries = d.SlowQueriesPerSec
 		summary.RowLockWaitsPerSec = d.RowLockWaitsPerSec
 		summary.TmpDiskTablesPct = d.TmpDiskTablesPct
 		summary.AbortedConnectsPerSec = d.AbortedConnectsPerSec
@@ -161,6 +226,9 @@ func (h *MySQLAPIHandler) handleMySQLTimeSeries(w http.ResponseWriter, r *http.R
 	}
 
 	checkID := strings.TrimSpace(r.URL.Query().Get("checkId"))
+	if checkID == "" {
+		checkID = h.firstMySQLCheckID()
+	}
 	if checkID == "" {
 		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("checkId is required"))
 		return

@@ -73,6 +73,26 @@ func (s *LiveMySQLSampler) Collect(ctx context.Context, check CheckConfig) (MySQ
 		return MySQLSample{}, fmt.Errorf("collect global variables: %w", err)
 	}
 
+	if err := s.collectProcessList(queryCtx, db, &sample); err != nil {
+		// Non-fatal: process list is supplementary data
+		sample.ProcessList = nil
+	}
+
+	// Collect per-user connection stats from performance_schema
+	if err := s.collectUserStats(queryCtx, db, &sample, check); err != nil {
+		sample.UserStats = nil
+	}
+
+	// Collect per-host connection stats from performance_schema
+	if err := s.collectHostStats(queryCtx, db, &sample, check); err != nil {
+		sample.HostStats = nil
+	}
+
+	// Collect top query digests from performance_schema
+	if err := s.collectTopQueries(queryCtx, db, &sample, check); err != nil {
+		sample.TopQueries = nil
+	}
+
 	return sample, nil
 }
 
@@ -157,6 +177,28 @@ func (s *LiveMySQLSampler) applyStatusVar(name, value string, sample *MySQLSampl
 		sample.CreatedTmpTables = v
 	case "Connection_errors_max_connections":
 		sample.ConnectionsRefused = v
+	case "Select_scan":
+		sample.SelectScan = v
+	case "Select_full_join":
+		sample.SelectFullJoin = v
+	case "Sort_merge_passes":
+		sample.SortMergePasses = v
+	case "Handler_read_rnd_next":
+		sample.HandlerReadRndNext = v
+	case "Innodb_buffer_pool_read_requests":
+		sample.BufferPoolReadRequests = v
+	case "Innodb_buffer_pool_reads":
+		sample.BufferPoolReads = v
+	case "Table_locks_waited":
+		sample.TableLocksWaited = v
+	case "Table_locks_immediate":
+		sample.TableLocksImmediate = v
+	case "Open_files":
+		sample.OpenFiles = v
+	case "Open_tables":
+		sample.OpenTables = v
+	case "Opened_tables":
+		sample.OpenedTables = v
 	}
 }
 
@@ -169,5 +211,131 @@ func (s *LiveMySQLSampler) applyVariableVar(name, value string, sample *MySQLSam
 	switch name {
 	case "max_connections":
 		sample.MaxConnections = v
+	case "open_files_limit":
+		sample.OpenFilesLimit = v
+	case "table_open_cache":
+		sample.TableOpenCache = v
 	}
+}
+
+func (s *LiveMySQLSampler) collectProcessList(ctx context.Context, db *sql.DB, sample *MySQLSample) error {
+	rows, err := db.QueryContext(ctx, "SHOW FULL PROCESSLIST")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var processes []MySQLProcess
+	for rows.Next() {
+		var (
+			id                 int64
+			user, host         string
+			dbName, info       sql.NullString
+			command, state     sql.NullString
+			timeVal            int64
+		)
+		if err := rows.Scan(&id, &user, &host, &dbName, &command, &timeVal, &state, &info); err != nil {
+			continue
+		}
+		p := MySQLProcess{
+			ID:      id,
+			User:    user,
+			Host:    host,
+			DB:      dbName.String,
+			Command: command.String,
+			Time:    timeVal,
+			State:   state.String,
+			Info:    info.String,
+		}
+		processes = append(processes, p)
+	}
+	sample.ProcessList = processes
+	return rows.Err()
+}
+
+func (s *LiveMySQLSampler) collectUserStats(ctx context.Context, db *sql.DB, sample *MySQLSample, check CheckConfig) error {
+	limit := 20
+	if check.MySQL != nil && check.MySQL.HostUserLimit > 0 {
+		limit = check.MySQL.HostUserLimit
+	}
+
+	rows, err := db.QueryContext(ctx, fmt.Sprintf(
+		"SELECT USER, CURRENT_CONNECTIONS, TOTAL_CONNECTIONS FROM performance_schema.users WHERE USER IS NOT NULL ORDER BY CURRENT_CONNECTIONS DESC LIMIT %d", limit))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var stats []MySQLUserStat
+	for rows.Next() {
+		var u MySQLUserStat
+		if err := rows.Scan(&u.User, &u.CurrentConnections, &u.TotalConnections); err != nil {
+			continue
+		}
+		stats = append(stats, u)
+	}
+	sample.UserStats = stats
+	return rows.Err()
+}
+
+func (s *LiveMySQLSampler) collectHostStats(ctx context.Context, db *sql.DB, sample *MySQLSample, check CheckConfig) error {
+	limit := 20
+	if check.MySQL != nil && check.MySQL.HostUserLimit > 0 {
+		limit = check.MySQL.HostUserLimit
+	}
+
+	rows, err := db.QueryContext(ctx, fmt.Sprintf(
+		"SELECT HOST, CURRENT_CONNECTIONS, TOTAL_CONNECTIONS FROM performance_schema.hosts WHERE HOST IS NOT NULL ORDER BY CURRENT_CONNECTIONS DESC LIMIT %d", limit))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var stats []MySQLHostStat
+	for rows.Next() {
+		var h MySQLHostStat
+		if err := rows.Scan(&h.Host, &h.CurrentConnections, &h.TotalConnections); err != nil {
+			continue
+		}
+		stats = append(stats, h)
+	}
+	sample.HostStats = stats
+	return rows.Err()
+}
+
+func (s *LiveMySQLSampler) collectTopQueries(ctx context.Context, db *sql.DB, sample *MySQLSample, check CheckConfig) error {
+	limit := 20
+	if check.MySQL != nil && check.MySQL.StatementLimit > 0 {
+		limit = check.MySQL.StatementLimit
+	}
+
+	rows, err := db.QueryContext(ctx, fmt.Sprintf(
+		`SELECT IFNULL(DIGEST_TEXT, ''), COUNT_STAR,
+		 ROUND(SUM_TIMER_WAIT/1000000000000, 4),
+		 ROUND(AVG_TIMER_WAIT/1000000000000, 4),
+		 SUM_ROWS_SENT, SUM_ROWS_EXAMINED,
+		 SUM_ERRORS, SUM_WARNINGS,
+		 IFNULL(FIRST_SEEN, ''), IFNULL(LAST_SEEN, '')
+		 FROM performance_schema.events_statements_summary_by_digest
+		 WHERE DIGEST_TEXT IS NOT NULL
+		 ORDER BY SUM_TIMER_WAIT DESC LIMIT %d`, limit))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var stats []MySQLDigestStat
+	for rows.Next() {
+		var d MySQLDigestStat
+		if err := rows.Scan(&d.DigestText, &d.CountStar, &d.SumTimerWait, &d.AvgTimerWait, &d.SumRowsSent, &d.SumRowsExam, &d.SumErrors, &d.SumWarnings, &d.FirstSeen, &d.LastSeen); err != nil {
+			continue
+		}
+		// Truncate long digest text for API responses
+		if len(d.DigestText) > 200 {
+			d.DigestText = d.DigestText[:200] + "..."
+		}
+		stats = append(stats, d)
+	}
+	sample.TopQueries = stats
+	return rows.Err()
 }

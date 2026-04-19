@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Build output
+frontend/dist/
+backend/healthmon
+
+# Environment & secrets
+.env
+.env.*
+backend/data/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+
+# Screenshots & temp
+*.png
+*.jpg
+*.jpeg
+
+# Playwright
+.playwright-mcp/
+
+# Root package lock (not needed)
+/package-lock.json

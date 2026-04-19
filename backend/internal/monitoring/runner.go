@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -16,13 +17,18 @@ import (
 )
 
 type Runner struct {
-	cfg          *Config
-	store        Store
-	client       *http.Client
-	metrics      *MetricsCollector
-	mysqlSampler MySQLSampler
-	running      bool
-	mu           sync.Mutex
+	cfg             *Config
+	store           Store
+	client          *http.Client
+	metrics         *MetricsCollector
+	mysqlSampler    MySQLSampler
+	mysqlRepo       MySQLMetricsRepository
+	mysqlRuleEngine *MySQLRuleEngine
+	incidentManager *IncidentManager
+	outbox          *FileNotificationOutbox
+	snapshotRepo    IncidentSnapshotRepository
+	running         bool
+	mu              sync.Mutex
 }
 
 func NewRunner(cfg *Config, store Store) *Runner {
@@ -338,6 +344,31 @@ func (r *Runner) SetMySQLSampler(sampler MySQLSampler) {
 	r.mysqlSampler = sampler
 }
 
+// SetMySQLRepo sets the MySQL repository for persisting samples.
+func (r *Runner) SetMySQLRepo(repo MySQLMetricsRepository) {
+	r.mysqlRepo = repo
+}
+
+// SetMySQLRuleEngine sets the MySQL rule engine for alert evaluation.
+func (r *Runner) SetMySQLRuleEngine(engine *MySQLRuleEngine) {
+	r.mysqlRuleEngine = engine
+}
+
+// SetIncidentManager sets the incident manager for rule-triggered incidents.
+func (r *Runner) SetIncidentManager(im *IncidentManager) {
+	r.incidentManager = im
+}
+
+// SetNotificationOutbox sets the notification outbox for alert delivery.
+func (r *Runner) SetNotificationOutbox(outbox *FileNotificationOutbox) {
+	r.outbox = outbox
+}
+
+// SetSnapshotRepo sets the snapshot repository for evidence capture.
+func (r *Runner) SetSnapshotRepo(repo IncidentSnapshotRepository) {
+	r.snapshotRepo = repo
+}
+
 func (r *Runner) runMySQL(ctx context.Context, check CheckConfig, result *CheckResult) error {
 	if r.mysqlSampler == nil {
 		return fmt.Errorf("mysql sampler not configured")
@@ -368,6 +399,77 @@ func (r *Runner) runMySQL(ctx context.Context, check CheckConfig, result *CheckR
 	if sample.MaxConnections > 0 {
 		utilPct := float64(sample.Connections) / float64(sample.MaxConnections) * 100
 		result.Metrics["connectionUtilPct"] = utilPct
+	}
+
+	// Persist sample and compute delta
+	var delta *MySQLDelta
+	if r.mysqlRepo != nil {
+		sampleID, err := r.mysqlRepo.AppendSample(sample)
+		if err != nil {
+			log.Printf("warning: failed to persist mysql sample: %v", err)
+		} else {
+			if d, err := r.mysqlRepo.ComputeAndAppendDelta(sampleID); err != nil {
+				log.Printf("warning: failed to compute mysql delta: %v", err)
+			} else {
+				delta = &d
+			}
+		}
+	}
+
+	// Evaluate MySQL rules and process incidents
+	if r.mysqlRuleEngine != nil && r.incidentManager != nil {
+		evalResults := r.mysqlRuleEngine.Evaluate(check.ID, sample, delta)
+		for _, er := range evalResults {
+			if er.Action == "open" {
+				metadata := map[string]string{
+					"ruleCode": er.RuleCode,
+					"checkId":  er.CheckID,
+				}
+				if err := r.incidentManager.ProcessAlert(
+					er.CheckID,
+					check.Name,
+					"mysql",
+					er.Severity,
+					er.Message,
+					metadata,
+				); err != nil {
+					log.Printf("warning: failed to create incident for rule %s: %v", er.RuleCode, err)
+				} else {
+					// Record incident ID in rule engine state
+					if incident, findErr := r.incidentManager.repo.FindOpenIncident(er.CheckID); findErr == nil && incident.ID != "" {
+						r.mysqlRuleEngine.SetOpenIncidentID(er.RuleCode, er.CheckID, incident.ID)
+
+						// Enqueue notification
+						if r.outbox != nil {
+							notifEvt := NotificationEvent{
+								NotificationID: fmt.Sprintf("notif-%s-%d", incident.ID, time.Now().UnixNano()),
+								IncidentID:     incident.ID,
+								Channel:        "default",
+								PayloadJSON:    fmt.Sprintf(`{"severity":"%s","rule":"%s","message":"%s","checkId":"%s"}`, er.Severity, er.RuleCode, er.Message, er.CheckID),
+								Status:         "pending",
+								CreatedAt:      time.Now().UTC(),
+							}
+							if err := r.outbox.Enqueue(notifEvt); err != nil {
+								log.Printf("warning: failed to enqueue notification: %v", err)
+							}
+						}
+
+						// Capture evidence snapshots
+						if r.snapshotRepo != nil && r.mysqlRepo != nil {
+							evidenceCollector := NewMySQLEvidenceCollector(r.mysqlRepo)
+							snaps := evidenceCollector.CaptureEvidence(ctx, incident.ID, check.ID, nil)
+							if err := r.snapshotRepo.SaveSnapshots(incident.ID, snaps); err != nil {
+								log.Printf("warning: failed to save evidence snapshots: %v", err)
+							}
+						}
+					}
+				}
+			} else if er.Action == "close" && er.IncidentID != "" {
+				if err := r.incidentManager.ResolveIncident(er.IncidentID, "system-auto-recovery"); err != nil {
+					log.Printf("warning: failed to auto-resolve incident %s: %v", er.IncidentID, err)
+				}
+			}
+		}
 	}
 
 	return nil

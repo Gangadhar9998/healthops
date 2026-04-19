@@ -6,19 +6,28 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - CONFIG_PATH=/root/config/default.json
-      - STATE_PATH=/root/data/state.json
+      - CONFIG_PATH=/app/config/default.json
+      - STATE_PATH=/app/data/state.json
+      - DATA_DIR=/app/data
+      - FRONTEND_DIR=/app/frontend/dist
       - MONGODB_URI=mongodb://mongo:27017
       - MONGODB_DATABASE=healthmon
-      - AUTH_ENABLED=false
-      - AUTH_USERNAME=admin
-      - AUTH_PASSWORD=admin123
+      - MONGODB_COLLECTION_PREFIX=healthmon
+      - MYSQL_DSN=healthmon:healthmon123@tcp(mysql:3306)/healthmon
     volumes:
-      - ./backend/data:/root/data
-      - ./backend/config:/root/config
+      - healthmon_data:/app/data
     depends_on:
-      - mongo
+      mongo:
+        condition: service_started
+      mysql:
+        condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   mongo:
     image: mongo:7
@@ -27,6 +36,34 @@ services:
     volumes:
       - mongo_data:/data/db
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  mysql:
+    image: mysql:8.0
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpass123
+      - MYSQL_DATABASE=healthmon
+      - MYSQL_USER=healthmon
+      - MYSQL_PASSWORD=healthmon123
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql-init:/docker-entrypoint-initdb.d
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpass123"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
 volumes:
   mongo_data:
+  healthmon_data:
+  mysql_data:

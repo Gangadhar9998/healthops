@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -133,6 +134,7 @@ func (s *Service) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/runs", s.handleRun)
 	mux.HandleFunc("/api/v1/summary", s.handleSummary)
 	mux.HandleFunc("/api/v1/results", s.handleResults)
+	mux.HandleFunc("/api/v1/dashboard", s.handleDashboard)
 	mux.HandleFunc("/api/v1/dashboard/checks", s.handleDashboardChecks)
 	mux.HandleFunc("/api/v1/dashboard/summary", s.handleDashboardSummary)
 	mux.HandleFunc("/api/v1/dashboard/results", s.handleDashboardResults)
@@ -177,6 +179,16 @@ func (s *Service) Run(ctx context.Context) error {
 	// Add Prometheus metrics endpoint
 	mux.Handle("/metrics", s.metrics.Handler())
 
+	// Serve frontend SPA if the dist directory exists
+	frontendDir := os.Getenv("FRONTEND_DIR")
+	if frontendDir == "" {
+		frontendDir = "frontend/dist"
+	}
+	if spaHandler := NewSPAHandler(frontendDir); spaHandler != nil {
+		mux.Handle("/", spaHandler)
+		s.logger.Printf("serving frontend from %s", frontendDir)
+	}
+
 	// Apply middlewares: first metrics, then logging
 	var handler http.Handler = mux
 	handler = metricsMiddleware(s.metrics, handler)
@@ -187,7 +199,7 @@ func (s *Service) Run(ctx context.Context) error {
 		Addr:              s.cfg.Server.Addr,
 		Handler:           handler,
 		ReadTimeout:       time.Duration(s.cfg.Server.ReadTimeoutSeconds) * time.Second,
-		WriteTimeout:      time.Duration(s.cfg.Server.WriteTimeoutSeconds) * time.Second,
+		WriteTimeout:      0, // Disabled: AI endpoints need long write windows; per-handler timeouts via context
 		IdleTimeout:       time.Duration(s.cfg.Server.IdleTimeoutSeconds) * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -468,6 +480,15 @@ func (s *Service) handleResults(w http.ResponseWriter, r *http.Request) {
 	writeAPIResponse(w, http.StatusOK, NewAPIResponse(results))
 }
 
+func (s *Service) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	snapshot := s.store.DashboardSnapshot()
+	writeAPIResponse(w, http.StatusOK, NewAPIResponse(snapshot))
+}
+
 func (s *Service) handleDashboardChecks(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -640,6 +661,13 @@ func (w *responseWriter) WriteHeader(statusCode int) {
 	w.ResponseWriter.WriteHeader(statusCode)
 }
 
+// Flush implements http.Flusher so SSE streaming works through middleware.
+func (w *responseWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // metricsMiddleware records HTTP request metrics
 func metricsMiddleware(mc *MetricsCollector, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -698,6 +726,10 @@ func (s *Service) handleIncidentByID(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
+		if len(parts) >= 2 && parts[1] == "snapshots" {
+			s.getIncidentSnapshots(w, incidentID)
+			return
+		}
 		s.getIncident(w, incidentID)
 	case http.MethodPost:
 		if !isRequestAuthorized(s.cfg.Auth, r) {
@@ -736,6 +768,19 @@ func (s *Service) getIncident(w http.ResponseWriter, incidentID string) {
 	}
 
 	writeAPIResponse(w, http.StatusOK, NewAPIResponse(incident))
+}
+
+func (s *Service) getIncidentSnapshots(w http.ResponseWriter, incidentID string) {
+	if s.mysqlAPIHandler != nil && s.mysqlAPIHandler.snapshotRepo != nil {
+		snaps, err := s.mysqlAPIHandler.snapshotRepo.GetSnapshots(incidentID)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeAPIResponse(w, http.StatusOK, NewAPIResponse(snaps))
+		return
+	}
+	writeAPIResponse(w, http.StatusOK, NewAPIResponse([]struct{}{}))
 }
 
 func (s *Service) acknowledgeIncident(w http.ResponseWriter, r *http.Request, incidentID string) {

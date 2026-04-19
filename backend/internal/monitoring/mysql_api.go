@@ -40,11 +40,23 @@ func NewMySQLAPIHandler(
 func (h *MySQLAPIHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/mysql/samples", h.handleMySQLSamples)
 	mux.HandleFunc("/api/v1/mysql/deltas", h.handleMySQLDeltas)
-	mux.HandleFunc("/api/v1/incidents/", h.handleIncidentSnapshots) // extends existing pattern
 	mux.HandleFunc("/api/v1/notifications", h.handleNotifications)
 	mux.HandleFunc("/api/v1/notifications/", h.handleNotificationByID)
 	mux.HandleFunc("/api/v1/ai/queue", h.handleAIQueue)
 	mux.HandleFunc("/api/v1/ai/queue/", h.handleAIQueueByID)
+}
+
+// firstMySQLCheckID returns the ID of the first enabled MySQL check, or "" if none exist.
+func (h *MySQLAPIHandler) firstMySQLCheckID() string {
+	if h.cfg == nil {
+		return ""
+	}
+	for _, c := range h.cfg.Checks {
+		if c.Type == "mysql" && (c.Enabled == nil || *c.Enabled) {
+			return c.ID
+		}
+	}
+	return ""
 }
 
 // GET /api/v1/mysql/samples?checkId=...&limit=...
@@ -55,6 +67,9 @@ func (h *MySQLAPIHandler) handleMySQLSamples(w http.ResponseWriter, r *http.Requ
 	}
 
 	checkID := strings.TrimSpace(r.URL.Query().Get("checkId"))
+	if checkID == "" {
+		checkID = h.firstMySQLCheckID()
+	}
 	if checkID == "" {
 		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("checkId is required"))
 		return
@@ -78,6 +93,9 @@ func (h *MySQLAPIHandler) handleMySQLDeltas(w http.ResponseWriter, r *http.Reque
 	}
 
 	checkID := strings.TrimSpace(r.URL.Query().Get("checkId"))
+	if checkID == "" {
+		checkID = h.firstMySQLCheckID()
+	}
 	if checkID == "" {
 		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("checkId is required"))
 		return

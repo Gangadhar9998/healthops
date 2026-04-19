@@ -46,7 +46,8 @@ type openAIChatMsg struct {
 type openAIChatResponse struct {
 	Choices []struct {
 		Message struct {
-			Content string `json:"content"`
+			Content          string `json:"content"`
+			ReasoningContent string `json:"reasoning_content"`
 		} `json:"message"`
 	} `json:"choices"`
 	Error *struct {
@@ -126,7 +127,15 @@ func (p *openAIProvider) Analyze(ctx context.Context, systemMsg, userMsg string)
 		return "", fmt.Errorf("empty response from model")
 	}
 
-	return chatResp.Choices[0].Message.Content, nil
+	content := chatResp.Choices[0].Message.Content
+	if content == "" {
+		content = chatResp.Choices[0].Message.ReasoningContent
+	}
+	if content == "" {
+		return "", fmt.Errorf("empty content from model")
+	}
+
+	return content, nil
 }
 
 func (p *openAIProvider) IsHealthy(ctx context.Context) bool {

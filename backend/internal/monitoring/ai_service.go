@@ -599,6 +599,115 @@ func (s *AIService) CheckProviderHealth(ctx context.Context) []ProviderHealth {
 	return results
 }
 
+// --- Ad-hoc MySQL Analysis ---
+
+// MySQLAskRequest is the request payload for ad-hoc MySQL AI analysis.
+type MySQLAskRequest struct {
+	Question   string `json:"question"`   // user's question, or empty for auto-analysis
+	ProviderID string `json:"providerId"` // optional specific provider
+}
+
+// MySQLAskResponse is the response from ad-hoc MySQL AI analysis.
+type MySQLAskResponse struct {
+	Answer      string   `json:"answer"`
+	Suggestions []string `json:"suggestions,omitempty"`
+	Severity    string   `json:"severity,omitempty"`
+	Provider    string   `json:"provider"`
+	Model       string   `json:"model"`
+	AnsweredAt  string   `json:"answeredAt"`
+}
+
+// AnalyzeMySQL performs ad-hoc AI analysis on current MySQL state.
+func (s *AIService) AnalyzeMySQL(ctx context.Context, question string, providerID string, healthJSON string) (*MySQLAskResponse, error) {
+	cfg := s.configStore.Get()
+	if !cfg.Enabled {
+		return nil, fmt.Errorf("AI analysis is disabled — configure a provider in Settings → AI")
+	}
+
+	var provider AIProvider
+	var provCfg AIProviderConfig
+	var err error
+
+	if providerID != "" {
+		provider, err = s.getProvider(providerID)
+		if err != nil {
+			return nil, err
+		}
+		for _, pc := range cfg.Providers {
+			if pc.ID == providerID {
+				provCfg = pc
+				break
+			}
+		}
+	} else {
+		provider, providerID, err = s.getDefaultProvider()
+		if err != nil {
+			return nil, err
+		}
+		for _, pc := range cfg.Providers {
+			if pc.ID == providerID {
+				provCfg = pc
+				break
+			}
+		}
+	}
+
+	systemMsg := `You are an expert MySQL DBA and performance engineer. You are analyzing a live MySQL server's current metrics, process list, and query digests.
+
+Your response must be clear, actionable, and concise. Format your response as JSON with these fields:
+{
+  "answer": "Your main analysis or answer to the question (use markdown formatting)",
+  "suggestions": ["actionable suggestion 1", "actionable suggestion 2", ...],
+  "severity": "info|warning|critical"
+}
+
+Guidelines:
+- If the user asks a specific question, answer it directly using the metrics provided
+- If no question is asked, provide a health assessment with the most important findings
+- Focus on actionable insights: what's wrong, why, and how to fix it
+- Reference specific metric values to support your analysis
+- Keep suggestions practical and ordered by priority
+- Use "info" severity for general queries, "warning" for potential issues, "critical" for urgent problems`
+
+	var userMsg string
+	if question != "" {
+		userMsg = fmt.Sprintf("**User Question:** %s\n\n**Current MySQL Metrics:**\n```json\n%s\n```", question, healthJSON)
+	} else {
+		userMsg = fmt.Sprintf("Analyze this MySQL server's current state and provide a health assessment with the most important findings and recommendations.\n\n**Current MySQL Metrics:**\n```json\n%s\n```", healthJSON)
+	}
+
+	responseText, err := provider.Analyze(ctx, systemMsg, userMsg)
+	if err != nil {
+		return nil, fmt.Errorf("AI provider error: %w", err)
+	}
+
+	resp := &MySQLAskResponse{
+		Answer:     responseText,
+		Provider:   string(provCfg.Provider),
+		Model:      provCfg.Model,
+		AnsweredAt: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	// Try to parse structured JSON from response
+	jsonStr := extractJSON(responseText)
+	if jsonStr != "" {
+		var parsed struct {
+			Answer      string   `json:"answer"`
+			Suggestions []string `json:"suggestions"`
+			Severity    string   `json:"severity"`
+		}
+		if err := json.Unmarshal([]byte(jsonStr), &parsed); err == nil {
+			if parsed.Answer != "" {
+				resp.Answer = parsed.Answer
+			}
+			resp.Suggestions = parsed.Suggestions
+			resp.Severity = parsed.Severity
+		}
+	}
+
+	return resp, nil
+}
+
 // --- Config Reload ---
 
 // ReloadProviders rebuilds providers from updated config.

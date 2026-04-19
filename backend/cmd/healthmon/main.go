@@ -74,6 +74,7 @@ func main() {
 
 	// Initialize MySQL-specific repositories if mysql checks exist
 	hasMySQLChecks := false
+	var mysqlRepo monitoring.MySQLMetricsRepository
 	for _, check := range cfg.Checks {
 		if check.Type == "mysql" {
 			hasMySQLChecks = true
@@ -82,13 +83,15 @@ func main() {
 	}
 
 	if hasMySQLChecks {
-		mysqlRepo, err := monitoring.NewFileMySQLRepository(dataDir)
+		repo, err := monitoring.NewFileMySQLRepository(dataDir)
 		if err != nil {
 			logger.Fatalf("init mysql repository: %v", err)
 		}
+		mysqlRepo = repo
 
 		sampler := monitoring.NewLiveMySQLSampler()
 		service.Runner().SetMySQLSampler(sampler)
+		service.Runner().SetMySQLRepo(mysqlRepo)
 
 		// Initialize MySQL rule engine
 		mysqlRules := monitoring.DefaultMySQLRules()
@@ -96,7 +99,16 @@ func main() {
 		if err != nil {
 			logger.Fatalf("init mysql rule engine: %v", err)
 		}
-		_ = ruleEngine // will be used in scheduler callbacks
+
+		// Wire rule engine + incident manager + outbox + snapshots into runner
+		service.Runner().SetMySQLRuleEngine(ruleEngine)
+		service.Runner().SetIncidentManager(incidentManager)
+		if outbox != nil {
+			service.Runner().SetNotificationOutbox(outbox)
+		}
+		if snapshotRepo != nil {
+			service.Runner().SetSnapshotRepo(snapshotRepo)
+		}
 
 		// Set up MySQL API handler
 		var auditLogger *monitoring.AuditLogger // service creates its own; we pass nil and let it use the service's
@@ -131,6 +143,9 @@ func main() {
 		defer aiService.StopWorker()
 
 		aiAPIHandler := monitoring.NewAIAPIHandler(aiService, aiConfigStore, nil, cfg)
+		if mysqlRepo != nil {
+			aiAPIHandler.SetMySQLRepo(mysqlRepo)
+		}
 		service.SetAIAPIHandler(aiAPIHandler)
 
 		// Wire auto-analysis: enqueue AI analysis when incidents are created

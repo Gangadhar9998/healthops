@@ -1,6 +1,7 @@
 package monitoring
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,6 +15,7 @@ type AIAPIHandler struct {
 	configStore *AIConfigStore
 	auditLogger *AuditLogger
 	cfg         *Config
+	mysqlRepo   MySQLMetricsRepository
 }
 
 // NewAIAPIHandler creates a new AI API handler.
@@ -31,6 +33,11 @@ func NewAIAPIHandler(
 	}
 }
 
+// SetMySQLRepo sets the MySQL repository for AI MySQL analysis.
+func (h *AIAPIHandler) SetMySQLRepo(repo MySQLMetricsRepository) {
+	h.mysqlRepo = repo
+}
+
 // RegisterRoutes registers AI-related API routes.
 func (h *AIAPIHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/ai/config", h.handleAIConfig)
@@ -41,6 +48,7 @@ func (h *AIAPIHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/ai/analyze/", h.handleAnalyzeIncident)
 	mux.HandleFunc("/api/v1/ai/health", h.handleAIProviderHealth)
 	mux.HandleFunc("/api/v1/ai/results/", h.handleAIResults)
+	mux.HandleFunc("/api/v1/mysql/ai/ask", h.handleMySQLAIAsk)
 }
 
 // --- AI Config ---
@@ -575,4 +583,88 @@ func (h *AIAPIHandler) handleAIResults(w http.ResponseWriter, r *http.Request) {
 
 	results := h.aiService.aiQueue.GetResults(incidentID)
 	writeAPIResponse(w, http.StatusOK, NewAPIResponse(results))
+}
+
+// --- MySQL AI Ask ---
+
+// POST /api/v1/mysql/ai/ask — ad-hoc MySQL AI analysis
+func (h *AIAPIHandler) handleMySQLAIAsk(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extend write deadline for AI calls (free APIs can be slow)
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Now().Add(120 * time.Second))
+
+	if h.aiService == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("AI service not configured"))
+		return
+	}
+
+	var req MySQLAskRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid request: %w", err))
+		return
+	}
+
+	// Gather current MySQL health data
+	if h.mysqlRepo == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("MySQL monitoring not configured"))
+		return
+	}
+
+	// Find first MySQL check
+	var checkID string
+	if h.cfg != nil {
+		for _, c := range h.cfg.Checks {
+			if c.Type == "mysql" && (c.Enabled == nil || *c.Enabled) {
+				checkID = c.ID
+				break
+			}
+		}
+	}
+	if checkID == "" {
+		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("no MySQL check configured"))
+		return
+	}
+
+	// Get latest sample for context
+	samples, err := h.mysqlRepo.RecentSamples(checkID, 1)
+	if err != nil || len(samples) == 0 {
+		writeAPIError(w, http.StatusInternalServerError, fmt.Errorf("no MySQL samples available"))
+		return
+	}
+
+	// Get recent deltas for rate-of-change context
+	deltas, _ := h.mysqlRepo.RecentDeltas(checkID, 3)
+
+	// Build health JSON context for the AI
+	contextData := struct {
+		LatestSample interface{} `json:"latestSample"`
+		RecentDeltas interface{} `json:"recentDeltas,omitempty"`
+	}{
+		LatestSample: samples[0],
+	}
+	if len(deltas) > 0 {
+		contextData.RecentDeltas = deltas
+	}
+	healthJSON, err := json.MarshalIndent(contextData, "", "  ")
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	// Call the AI with extended timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+
+	result, err := h.aiService.AnalyzeMySQL(ctx, req.Question, req.ProviderID, string(healthJSON))
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	writeAPIResponse(w, http.StatusOK, NewAPIResponse(result))
 }
