@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 go build -o healthmon ./cmd/healthmon
 
 # ---- Stage 3: Runtime ----
 FROM alpine:3.20
-RUN apk --no-cache add ca-certificates tzdata procps bind-tools
+RUN apk --no-cache add ca-certificates tzdata procps bind-tools openssh-client
 WORKDIR /app
 
 # Copy backend binary and config

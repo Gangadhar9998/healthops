@@ -155,6 +155,10 @@ func (s *Service) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/alert-rules", s.handleAlertRules)
 	mux.HandleFunc("/api/v1/alert-rules/", s.handleAlertRuleByID)
 
+	// Remote servers
+	mux.HandleFunc("/api/v1/servers", s.handleServers)
+	mux.HandleFunc("/api/v1/servers/", s.handleServerByID)
+
 	// SSE and auth
 	mux.HandleFunc("/api/v1/events", s.handleSSE)
 	mux.HandleFunc("/api/v1/auth/me", s.handleAuthMe)
@@ -244,8 +248,8 @@ func (s *Service) handleChecks(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		state := s.store.Snapshot()
-		items := toCheckListItems(state.Checks)
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(items))
+		safe := sanitizeChecksForList(state.Checks)
+		writeAPIResponse(w, http.StatusOK, NewAPIResponse(safe))
 	case http.MethodPost:
 		if !isRequestAuthorized(s.cfg.Auth, r) {
 			requestAuth(w)
@@ -301,6 +305,19 @@ func (s *Service) handleCheckByID(w http.ResponseWriter, r *http.Request) {
 			requestAuth(w)
 			return
 		}
+		// Verify the check exists before updating
+		state := s.store.Snapshot()
+		exists := false
+		for _, c := range state.Checks {
+			if c.ID == id {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			writeAPIError(w, http.StatusNotFound, fmt.Errorf("check not found"))
+			return
+		}
 		var check CheckConfig
 		if err := json.NewDecoder(r.Body).Decode(&check); err != nil {
 			writeAPIError(w, http.StatusBadRequest, err)
@@ -331,6 +348,19 @@ func (s *Service) handleCheckByID(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		if !isRequestAuthorized(s.cfg.Auth, r) {
 			requestAuth(w)
+			return
+		}
+		// Verify the check exists before deleting
+		state := s.store.Snapshot()
+		found := false
+		for _, c := range state.Checks {
+			if c.ID == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			writeAPIError(w, http.StatusNotFound, fmt.Errorf("check not found"))
 			return
 		}
 		if err := s.store.DeleteCheck(id); err != nil {
@@ -784,13 +814,24 @@ func (s *Service) getIncidentSnapshots(w http.ResponseWriter, incidentID string)
 }
 
 func (s *Service) acknowledgeIncident(w http.ResponseWriter, r *http.Request, incidentID string) {
+	// Check if incident exists first
+	incident, err := s.incidentManager.repo.GetIncident(incidentID)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if incident.ID == "" {
+		writeAPIError(w, http.StatusNotFound, fmt.Errorf("incident not found"))
+		return
+	}
+
 	var payload struct {
 		AcknowledgedBy string `json:"acknowledgedBy"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		writeAPIError(w, http.StatusBadRequest, err)
-		return
+		// Allow empty body — use anonymous
+		payload.AcknowledgedBy = "anonymous"
 	}
 
 	if payload.AcknowledgedBy == "" {
@@ -815,13 +856,24 @@ func (s *Service) acknowledgeIncident(w http.ResponseWriter, r *http.Request, in
 }
 
 func (s *Service) resolveIncident(w http.ResponseWriter, r *http.Request, incidentID string) {
+	// Check if incident exists first
+	incident, err := s.incidentManager.repo.GetIncident(incidentID)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if incident.ID == "" {
+		writeAPIError(w, http.StatusNotFound, fmt.Errorf("incident not found"))
+		return
+	}
+
 	var payload struct {
 		ResolvedBy string `json:"resolvedBy"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		writeAPIError(w, http.StatusBadRequest, err)
-		return
+		// Allow empty body — use anonymous
+		payload.ResolvedBy = "anonymous"
 	}
 
 	if payload.ResolvedBy == "" {

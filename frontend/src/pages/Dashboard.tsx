@@ -215,7 +215,7 @@ export default function Dashboard() {
           </div>
           <div className="divide-y divide-slate-100 dark:divide-slate-800">
             {summary.latest && summary.latest.length > 0 ? (
-              summary.latest.slice(0, 8).map((result) => (
+              summary.latest.map((result) => (
                 <Link
                   key={result.id}
                   to={`/checks/${result.checkId}`}
@@ -257,15 +257,22 @@ export default function Dashboard() {
               const total = counts.total
               const healthyPct = total > 0 ? Math.round((counts.healthy / total) * 100) : 0
               return (
-                <div key={server} className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50">
+                <Link
+                  key={server}
+                  to={`/checks?server=${encodeURIComponent(server)}`}
+                  className="rounded-lg bg-slate-50 p-3 transition-all hover:bg-slate-100 hover:ring-1 hover:ring-blue-200 dark:bg-slate-800/50 dark:hover:bg-slate-800 dark:hover:ring-blue-800 cursor-pointer"
+                >
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{server}</span>
-                    <span className={cn(
-                      'text-xs font-semibold',
-                      healthyPct === 100 ? 'text-emerald-600' : healthyPct >= 80 ? 'text-amber-600' : 'text-red-600',
-                    )}>
-                      {healthyPct}%
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className={cn(
+                        'text-xs font-semibold',
+                        healthyPct === 100 ? 'text-emerald-600' : healthyPct >= 80 ? 'text-amber-600' : 'text-red-600',
+                      )}>
+                        {healthyPct}%
+                      </span>
+                      <ArrowRight className="h-3 w-3 text-slate-400" />
+                    </div>
                   </div>
                   <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
                     {counts.healthy > 0 && <div className="bg-emerald-500" style={{ width: `${(counts.healthy / total) * 100}%` }} />}
@@ -278,7 +285,7 @@ export default function Dashboard() {
                     {counts.warning > 0 && <span>{counts.warning} warn</span>}
                     {counts.critical > 0 && <span>{counts.critical} crit</span>}
                   </div>
-                </div>
+                </Link>
               )
             })}
           </div>

@@ -35,6 +35,33 @@ func NewFileStore(path string, checks []CheckConfig) (*FileStore, error) {
 
 	if len(store.state.Checks) == 0 && len(checks) > 0 {
 		store.state.Checks = cloneChecks(checks)
+	} else if len(checks) > 0 {
+		// Merge config checks into existing state: add new checks, update existing ones
+		existing := map[string]int{}
+		for i, c := range store.state.Checks {
+			existing[c.ID] = i
+		}
+		for _, c := range checks {
+			if idx, ok := existing[c.ID]; ok {
+				// Update existing check config (preserves results in state)
+				store.state.Checks[idx] = c
+			} else {
+				// New check from config — append
+				store.state.Checks = append(store.state.Checks, c)
+			}
+		}
+		// Remove checks that are no longer in config
+		configIDs := map[string]struct{}{}
+		for _, c := range checks {
+			configIDs[c.ID] = struct{}{}
+		}
+		filtered := store.state.Checks[:0]
+		for _, c := range store.state.Checks {
+			if _, ok := configIDs[c.ID]; ok {
+				filtered = append(filtered, c)
+			}
+		}
+		store.state.Checks = filtered
 	}
 	store.state.UpdatedAt = time.Now().UTC()
 

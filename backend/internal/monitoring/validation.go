@@ -13,10 +13,13 @@ import (
 
 const (
 	maxRequestSize = 1 << 20 // 1MB
+	maxNameLength  = 200
+	maxIDLength    = 100
 )
 
 var (
 	checkIDRegex = regexp.MustCompile(`^[a-z0-9-]+$`)
+	htmlTagRegex = regexp.MustCompile(`<[^>]*>`)
 )
 
 // ValidateCheckID validates that a check ID matches the required pattern.
@@ -24,8 +27,25 @@ func ValidateCheckID(id string) error {
 	if id == "" {
 		return errors.New("check ID cannot be empty")
 	}
+	if len(id) > maxIDLength {
+		return fmt.Errorf("check ID must be %d characters or fewer", maxIDLength)
+	}
 	if !checkIDRegex.MatchString(id) {
 		return fmt.Errorf("check ID must match pattern %q, got %q", checkIDRegex.String(), id)
+	}
+	return nil
+}
+
+// validateName validates a name field for length and dangerous content.
+func validateName(name string) error {
+	if name == "" {
+		return errors.New("name is required")
+	}
+	if len(name) > maxNameLength {
+		return fmt.Errorf("name must be %d characters or fewer", maxNameLength)
+	}
+	if htmlTagRegex.MatchString(name) {
+		return errors.New("name must not contain HTML tags")
 	}
 	return nil
 }
@@ -49,8 +69,8 @@ func ValidateAndDecodeCheck(r io.Reader) (CheckConfig, error) {
 	}
 
 	// Validate required fields
-	if check.Name == "" {
-		return CheckConfig{}, errors.New("name is required")
+	if err := validateName(check.Name); err != nil {
+		return CheckConfig{}, err
 	}
 
 	if check.Type == "" {

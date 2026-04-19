@@ -21,6 +21,7 @@ type SafeConfigView struct {
 	Workers              int          `json:"workers"`
 	AllowCommandChecks   bool         `json:"allowCommandChecks"`
 	TotalChecks          int          `json:"totalChecks"`
+	TotalServers         int          `json:"totalServers"`
 }
 
 // ConfigUpdate carries the subset of config fields safe to change at runtime.
@@ -74,6 +75,18 @@ func (e *AlertRuleEngine) AddRule(rule AlertRule) {
 	e.rules = append(e.rules, rule)
 }
 
+// GetRule returns a single alert rule by ID.
+func (e *AlertRuleEngine) GetRule(id string) (AlertRule, error) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	for _, r := range e.rules {
+		if r.ID == id {
+			return r, nil
+		}
+	}
+	return AlertRule{}, fmt.Errorf("alert rule not found: %s", id)
+}
+
 // UpdateRule replaces the rule with a matching ID.
 func (e *AlertRuleEngine) UpdateRule(rule AlertRule) error {
 	e.mu.Lock()
@@ -124,6 +137,7 @@ func (s *Service) handleConfigGet(w http.ResponseWriter, _ *http.Request) {
 		Workers:              s.cfg.Workers,
 		AllowCommandChecks:   s.cfg.AllowCommandChecks,
 		TotalChecks:          len(s.cfg.Checks),
+		TotalServers:         len(s.cfg.Servers),
 	}
 	writeAPIResponse(w, http.StatusOK, NewAPIResponse(view))
 }
@@ -196,6 +210,7 @@ func (s *Service) safeConfigView() SafeConfigView {
 		Workers:              s.cfg.Workers,
 		AllowCommandChecks:   s.cfg.AllowCommandChecks,
 		TotalChecks:          len(s.cfg.Checks),
+		TotalServers:         len(s.cfg.Servers),
 	}
 }
 
@@ -255,6 +270,8 @@ func (s *Service) handleAlertRuleByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch r.Method {
+	case http.MethodGet:
+		s.handleAlertRuleGet(w, r, id)
 	case http.MethodPut:
 		s.handleAlertRuleUpdate(w, r, id)
 	case http.MethodDelete:
@@ -262,6 +279,19 @@ func (s *Service) handleAlertRuleByID(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *Service) handleAlertRuleGet(w http.ResponseWriter, _ *http.Request, id string) {
+	if s.alertEngine == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("alert engine not configured"))
+		return
+	}
+	rule, err := s.alertEngine.GetRule(id)
+	if err != nil {
+		writeAPIError(w, http.StatusNotFound, err)
+		return
+	}
+	writeAPIResponse(w, http.StatusOK, NewAPIResponse(rule))
 }
 
 func (s *Service) handleAlertRuleUpdate(w http.ResponseWriter, r *http.Request, id string) {

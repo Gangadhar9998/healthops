@@ -49,8 +49,8 @@ func TestNewFileStoreLoadsExistingState(t *testing.T) {
 		t.Fatalf("write existing state: %v", err)
 	}
 
-	// Create store - should load existing state, not use provided checks
-	store, err := NewFileStore(path, []CheckConfig{{ID: "new", Name: "New", Type: "api", Target: "https://new.com"}})
+	// Create store with same check in config — should preserve existing results and timestamps
+	store, err := NewFileStore(path, []CheckConfig{{ID: "existing", Name: "Existing", Type: "api", Target: "https://existing.com"}})
 	if err != nil {
 		t.Fatalf("new file store: %v", err)
 	}
@@ -67,6 +67,35 @@ func TestNewFileStoreLoadsExistingState(t *testing.T) {
 	}
 	if state.LastRunAt.IsZero() {
 		t.Error("expected LastRunAt from existing state")
+	}
+}
+
+func TestNewFileStoreConfigSyncRemovesOldChecks(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+
+	existingState := State{
+		Checks: []CheckConfig{
+			{ID: "old-check", Name: "Old", Type: "api", Target: "https://old.com"},
+		},
+	}
+	data := mustMarshalJSON(t, existingState)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatalf("write existing state: %v", err)
+	}
+
+	// Provide a different check in config — old check should be removed
+	store, err := NewFileStore(path, []CheckConfig{{ID: "new-check", Name: "New", Type: "api", Target: "https://new.com"}})
+	if err != nil {
+		t.Fatalf("new file store: %v", err)
+	}
+
+	state := store.Snapshot()
+	if len(state.Checks) != 1 {
+		t.Errorf("expected 1 check, got %d", len(state.Checks))
+	}
+	if state.Checks[0].ID != "new-check" {
+		t.Errorf("expected new-check, got %q", state.Checks[0].ID)
 	}
 }
 

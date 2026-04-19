@@ -201,6 +201,27 @@ func (q *FileAIQueue) GetResults(incidentID string) []AIAnalysisResult {
 	return out
 }
 
+// AllResults returns all AI analysis results, most recent first, up to limit.
+func (q *FileAIQueue) AllResults(limit int) []AIAnalysisResult {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+
+	if limit <= 0 {
+		limit = 100
+	}
+
+	n := len(q.results)
+	if n > limit {
+		n = limit
+	}
+	out := make([]AIAnalysisResult, n)
+	// Return in reverse order (most recent first)
+	for i := 0; i < n; i++ {
+		out[i] = q.results[len(q.results)-1-i]
+	}
+	return out
+}
+
 // ListPendingItems returns pending AI queue items (for API read access).
 func (q *FileAIQueue) ListPendingItems(limit int) ([]AIQueueItem, error) {
 	q.mu.RLock()

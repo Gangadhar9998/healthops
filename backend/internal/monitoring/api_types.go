@@ -88,6 +88,16 @@ func toCheckListItems(checks []CheckConfig) []CheckListItem {
 	return items
 }
 
+// sanitizeChecksForList returns full CheckConfig objects with sensitive metadata stripped
+func sanitizeChecksForList(checks []CheckConfig) []CheckConfig {
+	safe := make([]CheckConfig, len(checks))
+	for i := range checks {
+		safe[i] = checks[i]
+		safe[i].Metadata = nil
+	}
+	return safe
+}
+
 // writeAPIResponse writes an APIResponse to the response writer
 func writeAPIResponse(w http.ResponseWriter, statusCode int, response APIResponse) {
 	w.Header().Set("Content-Type", "application/json")

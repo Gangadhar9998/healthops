@@ -5,7 +5,7 @@ export const SSE_RECONNECT_DELAY = 3_000
 
 export const STATUS_ORDER = ['critical', 'warning', 'unknown', 'healthy'] as const
 
-export const CHECK_TYPES = ['api', 'tcp', 'process', 'command', 'log', 'mysql'] as const
+export const CHECK_TYPES = ['api', 'tcp', 'process', 'command', 'log', 'mysql', 'ssh'] as const
 
 export const NAV_ITEMS = [
   { label: 'Dashboard', path: '/', icon: 'LayoutDashboard' },
