@@ -36,7 +36,7 @@ export default function Incidents() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">Incidents</h1>
-          <p className="text-sm text-slate-500">{incidents?.length ?? 0} incidents</p>
+          <p className="text-sm text-slate-500">{incidents?.total ?? 0} incidents</p>
         </div>
         <ExportButton downloadUrl={settingsApi.exportIncidents('csv')} />
       </div>
@@ -77,10 +77,10 @@ export default function Incidents() {
       </div>
 
       {/* Incident list */}
-      {incidents && incidents.length > 0 ? (
+      {incidents && incidents.items.length > 0 ? (
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
           <div className="divide-y divide-slate-100 dark:divide-slate-800">
-            {incidents.map((inc) => (
+            {incidents.items.map((inc) => (
               <Link
                 key={inc.id}
                 to={`/incidents/${inc.id}`}

@@ -38,7 +38,10 @@ MongoDB is best-effort only. The backend keeps running with the local file store
 - **Server Management**: Add remote servers, SSH-based health checks for process/command/connectivity
 - **MySQL Monitoring**: Collects `SHOW GLOBAL STATUS/VARIABLES`, computes deltas, 9 default alert rules
 - **Incidents**: Auto-created from alert rules, acknowledge/resolve lifecycle, evidence snapshots
-- **Alert Rules**: Configurable thresholds, cooldowns, consecutive breaches, per-check or global
+- **Alert Rules**: 5 default rules out of the box. Configurable thresholds, cooldowns, consecutive breaches, per-check or global. File-persisted.
+- **JWT Authentication**: Token-based auth with admin/viewer roles. Default credentials: `admin` / `admin`
+- **User Management**: Create, update, delete users with role-based access control
+- **Notification Channels**: 6 channel types (email, Slack, Discord, Telegram, webhooks, PagerDuty) with smart filters (severity, check IDs, check types, servers, tags). Professional HTML email templates with incident stats and dashboard links. Incident-level deduplication prevents alert storms.
 - **BYOK AI Analysis**: Configure OpenAI/Anthropic/Google/Ollama/Custom providers from the UI. API keys AES-256-GCM encrypted at rest. Auto-analyzes incidents with configurable prompt templates.
 - **Analytics**: Uptime, response times, failure rates, incident MTTA/MTTR
 - **Export**: CSV/JSON export for MySQL samples, incidents, and results
@@ -49,7 +52,9 @@ MongoDB is best-effort only. The backend keeps running with the local file store
 Full reference: [`docs/api-reference.md`](docs/api-reference.md) (62 endpoints)
 
 **Core**: `/healthz`, `/readyz`, checks CRUD, runs, summary, results, dashboard  
+**Auth & Users**: login, user CRUD, role management  
 **Incidents**: list, get, acknowledge, resolve, snapshots  
+**Notifications**: channel CRUD, toggle, test, smart filters  
 **MySQL**: samples, deltas, health card, time-series  
 **BYOK AI**: config, providers, prompts, analyze, health, results  
-**More**: alert rules, analytics, audit, notifications, SSE, config, stats, exports, `/metrics`
+**More**: alert rules, analytics, audit, SSE, config, stats, exports, `/metrics`

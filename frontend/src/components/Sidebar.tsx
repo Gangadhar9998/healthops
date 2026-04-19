@@ -2,12 +2,14 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Activity, AlertTriangle, Database,
   BarChart3, Brain, Settings, ChevronsLeft, X, Heart, Server,
+  Users, Bell, LogOut,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useAuth } from '@/hooks/useAuth'
 
 const ICON_MAP = {
   LayoutDashboard, Activity, AlertTriangle, Database,
-  BarChart3, Brain, Settings, Server,
+  BarChart3, Brain, Settings, Server, Users, Bell,
 } as const
 
 const NAV = [
@@ -18,6 +20,8 @@ const NAV = [
   { label: 'MySQL', path: '/mysql', icon: 'Database' as const },
   { label: 'Analytics', path: '/analytics', icon: 'BarChart3' as const },
   { label: 'AI Analysis', path: '/ai', icon: 'Brain' as const },
+  { label: 'Notifications', path: '/notifications', icon: 'Bell' as const },
+  { label: 'Users', path: '/users', icon: 'Users' as const },
   { label: 'Settings', path: '/settings', icon: 'Settings' as const },
 ]
 
@@ -29,6 +33,8 @@ interface Props {
 }
 
 export function Sidebar({ collapsed, mobileOpen, onCollapse, onMobileClose }: Props) {
+  const { user, logout } = useAuth()
+
   return (
     <aside
       className={cn(
@@ -98,8 +104,31 @@ export function Sidebar({ collapsed, mobileOpen, onCollapse, onMobileClose }: Pr
 
       {/* Footer */}
       {!collapsed && (
-        <div className="border-t border-slate-200 px-4 py-3 dark:border-slate-800">
-          <p className="text-xs text-slate-400">HealthOps v0.1.0</p>
+        <div className="border-t border-slate-200 px-3 py-3 dark:border-slate-800">
+          <div className="flex items-center justify-between">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-slate-700 dark:text-slate-300">{user?.displayName || user?.username}</p>
+              <p className="text-xs text-slate-400 capitalize">{user?.role}</p>
+            </div>
+            <button
+              onClick={logout}
+              className="shrink-0 rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
+              title="Logout"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+      {collapsed && (
+        <div className="border-t border-slate-200 px-2 py-3 dark:border-slate-800">
+          <button
+            onClick={logout}
+            className="mx-auto flex h-8 w-8 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
+            title="Logout"
+          >
+            <LogOut className="h-4 w-4" />
+          </button>
         </div>
       )}
     </aside>

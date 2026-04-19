@@ -11,7 +11,9 @@ export function useSSE(onMessage: (payload: SSEPayload) => void) {
   const connect = useCallback(() => {
     if (esRef.current) esRef.current.close()
 
-    const es = new EventSource('/api/v1/events')
+    const token = localStorage.getItem('healthops_token')
+    const url = token ? `/api/v1/events?token=${encodeURIComponent(token)}` : '/api/v1/events'
+    const es = new EventSource(url)
     esRef.current = es
 
     es.onopen = () => setConnected(true)

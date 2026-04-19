@@ -7,10 +7,69 @@ import (
 	"strings"
 )
 
+// authMiddleware enforces authentication via JWT Bearer tokens or Basic Auth.
+// Public endpoints (login, healthz) are exempt.
+// GET requests require authentication but allow any role.
+// Mutating requests (POST/PUT/PATCH/DELETE) require "admin" role.
+func authMiddleware(cfg AuthConfig, userStore *UserStore, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+
+		// Public endpoints — no auth required
+		if path == "/healthz" || path == "/readyz" || path == "/metrics" ||
+			path == "/api/v1/auth/login" || strings.HasPrefix(path, "/assets/") ||
+			path == "/" || path == "/favicon.ico" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Serve frontend SPA files without auth
+		if !strings.HasPrefix(path, "/api/") && path != "/metrics" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// If user store is available, use JWT auth
+		if userStore != nil {
+			claims := ExtractJWTClaims(r)
+			if claims == nil {
+				// Also try legacy Basic Auth for backward compatibility
+				if cfg.Enabled && IsRequestAuthorized(cfg, r) {
+					next.ServeHTTP(w, r)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Write([]byte(`{"success":false,"error":{"code":401,"message":"authentication required"}}`))
+				return
+			}
+
+			// Role-based: ops users can only GET
+			if isMutatingMethod(r.Method) && claims.Role != RoleAdmin {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				w.Write([]byte(`{"success":false,"error":{"code":403,"message":"admin role required for this action"}}`))
+				return
+			}
+
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Fallback: legacy Basic Auth
+		if cfg.Enabled {
+			if isMutatingMethod(r.Method) && !IsRequestAuthorized(cfg, r) {
+				RequestAuth(w)
+				return
+			}
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 // basicAuthMiddleware returns middleware that enforces basic auth.
-// GET requests are allowed without auth (read-only).
-// POST/PUT/PATCH/DELETE require auth.
-// When auth is disabled, all requests pass through.
+// Kept for backward compatibility.
 func basicAuthMiddleware(cfg AuthConfig, next http.Handler) http.Handler {
 	if !cfg.Enabled {
 		return next

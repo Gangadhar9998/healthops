@@ -29,7 +29,7 @@ https://github.com/user-attachments/assets/healthops-demo.mp4
 - **Beautiful UI** — React + Tailwind dashboard with real-time SSE updates, charts, and dark mode
 - **Single binary** — No external dependencies required. Optional MongoDB mirror and MySQL monitoring
 - **62+ API endpoints** — Full REST API for automation and integration
-- **Production-ready** — Auth, audit logging, Prometheus metrics, retention cleanup, encrypted AI keys
+- **Production-ready** — JWT auth, user management, notification channels, audit logging, Prometheus metrics, retention cleanup, encrypted AI keys
 
 ## Screenshots
 
@@ -105,12 +105,36 @@ curl http://localhost:8080/healthz
 
 Each check supports: custom intervals, retries, cooldowns, timeout, and warning thresholds.
 
+### Authentication & User Management
+
+- **JWT token-based authentication** — Login via `/api/v1/auth/login`, receive a signed JWT
+- **User management** — Create, update, delete users with admin/viewer roles
+- **Role-based access** — Admins can mutate; viewers are read-only
+- **Default credentials** — `admin` / `admin` (change on first login)
+
+### Notification Channels
+
+Multi-channel alerting with smart filtering:
+- **6 channel types** — Email, Slack, Discord, Telegram, Webhooks, PagerDuty
+- **Smart filters** — Route alerts by severity, specific checks, check types, servers, and tags
+- **Professional HTML emails** — Enterprise-grade email template with severity-coded headers, incident stats, and dashboard links (with plain text fallback)
+- **Deduplication** — Incident-level dedup prevents duplicate notifications for the same incident + channel; cooldown per check
+- **Test notifications** — Send test alerts from the UI before going live
+- **Resolution alerts** — Optionally notify when incidents resolve
+
 ### Incident Management
 
 - Auto-created incidents from configurable alert rules
 - Full lifecycle: **open → acknowledge → resolve**
 - Evidence snapshots captured at incident creation
 - MTTA/MTTR analytics
+
+### Alert Rules
+
+- **5 default alert rules** out of the box (critical check failure, warning check failure, high failure rate, extended downtime, response time degradation)
+- Configurable thresholds, cooldowns, and consecutive-breach logic
+- Per-check or global scope
+- File-persisted at `data/alert_rules.json`
 
 ### AI-Powered Analysis (BYOK)
 
@@ -167,7 +191,8 @@ AI auto-analyzes new incidents with configurable prompt templates. API keys are 
 │  │    (File-based primary + optional MongoDB)      │  │
 │  └────────────────────────────────────────────────┘  │
 │                                                      │
-│  Auth · Validation · Audit · Prometheus · Alert Rules│
+│  JWT Auth · Users · Notifications · Alert Rules      │
+│  Audit · Prometheus · Validation · Deduplication     │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -206,9 +231,6 @@ healthops/
 | `FRONTEND_DIR` | — | Path to frontend dist folder |
 | `MONGODB_URI` | — | Optional MongoDB connection |
 | `MYSQL_DSN` | — | MySQL DSN for mysql checks |
-| `AUTH_ENABLED` | `false` | Enable HTTP Basic Auth |
-| `AUTH_USERNAME` | `admin` | Auth username |
-| `AUTH_PASSWORD` | — | Auth password |
 
 ### Check Configuration
 
@@ -237,7 +259,11 @@ HealthOps exposes 62+ REST endpoints. Full reference: [`backend/docs/api-referen
 
 **Core:** `/healthz`, `/readyz`, checks CRUD, manual runs, summary, results, dashboard
 
+**Auth & Users:** login, user CRUD, role management
+
 **Incidents:** list, detail, acknowledge, resolve, evidence snapshots
+
+**Notifications:** channel CRUD, toggle, test, smart filters
 
 **MySQL:** samples, deltas, health card, time-series, AI questions
 
@@ -263,9 +289,11 @@ go run ./cmd/loadtest -scenario=query -duration=2m
 
 ## Security
 
-- HTTP Basic Auth for mutating endpoints (optional, enable in config)
+- **JWT authentication** with role-based access control (admin/viewer)
+- User management with secure password handling
 - Command checks disabled by default (`allowCommandChecks=false`)
 - AI API keys AES-256-GCM encrypted at rest
+- Notification deduplication prevents alert storms
 - Input validation on all API endpoints
 - Secrets in env vars, never in config files
 
@@ -291,9 +319,3 @@ go run ./cmd/loadtest -scenario=query -duration=2m
 ## License
 
 Open source. See repository for details.
-- controlled migration from fragmented scripts/tools into one service
-
-Not ideal if you need:
-- multi-tenant SaaS features out of the box
-- turnkey managed alerting integrations without customization
-- full APM traces/profiling (this is health monitoring, not full observability tracing)

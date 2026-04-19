@@ -35,10 +35,13 @@ type NotificationDispatcher struct {
 	outbox       NotificationOutboxRepository
 	logger       *log.Logger
 	httpClient   *http.Client
+	dashboardURL string // optional: base URL for dashboard links in emails
 
 	// Track cooldowns: channelID:checkID → last sent time
 	cooldowns map[string]time.Time
-	mu        sync.Mutex
+	// Track notified incidents to prevent duplicates: incidentID:channelID
+	notified map[string]bool
+	mu       sync.Mutex
 }
 
 // NewNotificationDispatcher creates a dispatcher wired to the channel store.
@@ -58,7 +61,13 @@ func NewNotificationDispatcher(
 			Timeout: 10 * time.Second,
 		},
 		cooldowns: make(map[string]time.Time),
+		notified:  make(map[string]bool),
 	}
+}
+
+// SetDashboardURL sets the base URL used for dashboard links in email notifications.
+func (d *NotificationDispatcher) SetDashboardURL(url string) {
+	d.dashboardURL = url
 }
 
 // NotifyIncident evaluates all channels and sends notifications for matching ones.
@@ -82,15 +91,23 @@ func (d *NotificationDispatcher) NotifyIncident(incident monitoring.Incident, ch
 			d.logger.Printf("notification: channel %q in cooldown for check %s", ch.Name, incident.CheckID)
 			continue
 		}
+		// Prevent duplicate notifications for the same incident+channel
+		if d.alreadyNotified(incident.ID, ch.ID) {
+			continue
+		}
 
 		// Send async — don't block incident creation
 		go d.sendToChannel(ch, payload, incident.ID)
 		d.recordCooldown(ch, incident.CheckID)
+		d.markNotified(incident.ID, ch.ID)
 	}
 }
 
 // NotifyResolved sends resolution notifications to channels with notifyOnResolve enabled.
 func (d *NotificationDispatcher) NotifyResolved(incident monitoring.Incident, checkResult *monitoring.CheckResult) {
+	// Clear dedup tracking so reopened incidents can trigger fresh notifications
+	d.ClearIncident(incident.ID)
+
 	channels := d.channelStore.ListRaw()
 
 	payload := buildPayload(incident, "resolved")
@@ -186,6 +203,29 @@ func (d *NotificationDispatcher) recordCooldown(ch NotificationChannelConfig, ch
 
 	key := fmt.Sprintf("%s:%s", ch.ID, checkID)
 	d.cooldowns[key] = time.Now()
+}
+
+func (d *NotificationDispatcher) alreadyNotified(incidentID, channelID string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.notified[incidentID+":"+channelID]
+}
+
+func (d *NotificationDispatcher) markNotified(incidentID, channelID string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.notified[incidentID+":"+channelID] = true
+}
+
+// ClearIncident removes dedup tracking for a resolved incident so re-opened incidents can notify again.
+func (d *NotificationDispatcher) ClearIncident(incidentID string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for key := range d.notified {
+		if strings.HasPrefix(key, incidentID+":") {
+			delete(d.notified, key)
+		}
+	}
 }
 
 // sendToChannel dispatches the notification to the specific channel type.
@@ -325,16 +365,7 @@ func (d *NotificationDispatcher) sendWebhook(ch NotificationChannelConfig, p Not
 func (d *NotificationDispatcher) sendEmail(ch NotificationChannelConfig, p NotificationPayload) error {
 	subject := fmt.Sprintf("[HealthOps] %s — %s (%s)", strings.ToUpper(p.Status), p.CheckName, strings.ToUpper(p.Severity))
 
-	body := fmt.Sprintf(
-		"Incident: %s\nCheck: %s (%s)\nSeverity: %s\nServer: %s\nStatus: %s\nStarted: %s\n\n%s",
-		p.IncidentID, p.CheckName, p.CheckType,
-		strings.ToUpper(p.Severity), p.Server,
-		strings.ToUpper(p.Status), p.StartedAt,
-		p.Message,
-	)
-	if p.ResolvedAt != "" {
-		body += fmt.Sprintf("\nResolved: %s", p.ResolvedAt)
-	}
+	htmlBody := buildHTMLEmail(p, d.dashboardURL)
 
 	from := ch.FromEmail
 	if from == "" {
@@ -346,9 +377,14 @@ func (d *NotificationDispatcher) sendEmail(ch NotificationChannelConfig, p Notif
 		recipients[i] = strings.TrimSpace(recipients[i])
 	}
 
+	boundary := fmt.Sprintf("healthops-%d", time.Now().UnixNano())
 	msg := fmt.Sprintf(
-		"From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
-		from, strings.Join(recipients, ","), subject, body,
+		"From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=\"%s\"\r\n\r\n--%s\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s\r\n\r\n--%s\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n%s\r\n\r\n--%s--",
+		from, strings.Join(recipients, ","), subject,
+		boundary,
+		boundary, buildPlainTextFallback(p),
+		boundary, htmlBody,
+		boundary,
 	)
 
 	addr := fmt.Sprintf("%s:%d", ch.SMTPHost, ch.SMTPPort)
@@ -460,6 +496,27 @@ func buildPayload(incident monitoring.Incident, status string) NotificationPaylo
 		Message:    incident.Message,
 		StartedAt:  incident.StartedAt.Format(time.RFC3339),
 	}
+}
+
+func buildPlainTextFallback(p NotificationPayload) string {
+	lines := []string{
+		fmt.Sprintf("Incident: %s", p.IncidentID),
+		fmt.Sprintf("Check: %s (%s)", p.CheckName, p.CheckType),
+		fmt.Sprintf("Severity: %s", strings.ToUpper(p.Severity)),
+	}
+	if p.Server != "" {
+		lines = append(lines, fmt.Sprintf("Server: %s", p.Server))
+	}
+	lines = append(lines,
+		fmt.Sprintf("Status: %s", strings.ToUpper(p.Status)),
+		fmt.Sprintf("Started: %s", p.StartedAt),
+		"",
+		p.Message,
+	)
+	if p.ResolvedAt != "" {
+		lines = append(lines, fmt.Sprintf("\nResolved: %s", p.ResolvedAt))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func containsStr(slice []string, s string) bool {

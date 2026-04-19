@@ -32,6 +32,8 @@ type Service struct {
 	aiRoutes        RouteRegistrar
 	notifyRoutes    RouteRegistrar
 	snapshotRepo    IncidentSnapshotRepository
+	userStore       *UserStore
+	userAPI         *UserAPIHandler
 }
 
 func NewService(cfg *Config, store Store, logger *log.Logger) *Service {
@@ -63,10 +65,15 @@ func NewService(cfg *Config, store Store, logger *log.Logger) *Service {
 		}
 	}
 
-	// Initialize alert rule engine with empty rules (can be loaded from config later)
+	// Initialize alert rule engine with rules (loaded from file or defaults)
 	alertRules, _ := LoadRulesFromConfig(cfg)
 	if logger != nil {
 		svc.alertEngine = NewAlertRuleEngine(alertRules, logger)
+		svc.alertEngine.SetFilePath("data/alert_rules.json")
+		// Persist defaults to disk if no saved file existed
+		if len(alertRules) > 0 {
+			svc.alertEngine.PersistIfNeeded()
+		}
 	}
 
 	// Set up alert callback for scheduler
@@ -136,6 +143,12 @@ func (s *Service) SetSnapshotRepo(repo IncidentSnapshotRepository) {
 	s.snapshotRepo = repo
 }
 
+// SetUserStore sets the user store and creates the user API handler.
+func (s *Service) SetUserStore(us *UserStore) {
+	s.userStore = us
+	s.userAPI = NewUserAPIHandler(us)
+}
+
 // Runner returns the service's runner for external configuration.
 func (s *Service) Runner() *Runner {
 	return s.runner
@@ -179,6 +192,13 @@ func (s *Service) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/events", s.handleSSE)
 	mux.HandleFunc("/api/v1/auth/me", s.handleAuthMe)
 
+	// User management routes
+	if s.userAPI != nil {
+		mux.HandleFunc("/api/v1/auth/login", s.userAPI.HandleLogin)
+		mux.HandleFunc("/api/v1/users", s.userAPI.HandleUsers)
+		mux.HandleFunc("/api/v1/users/", s.userAPI.HandleUserByID)
+	}
+
 	// Export endpoints
 	if s.incidentManager != nil {
 		mux.HandleFunc("/api/v1/export/incidents", handleExportIncidents(s.incidentManager.repo))
@@ -213,11 +233,15 @@ func (s *Service) Run(ctx context.Context) error {
 		s.logger.Printf("serving frontend from %s", frontendDir)
 	}
 
-	// Apply middlewares: first metrics, then logging
+	// Apply middlewares: first metrics, then logging, then auth
 	var handler http.Handler = mux
 	handler = metricsMiddleware(s.metrics, handler)
 	handler = loggingMiddleware(s.logger, handler)
-	handler = basicAuthMiddleware(s.cfg.Auth, handler)
+	if s.userStore != nil {
+		handler = authMiddleware(s.cfg.Auth, s.userStore, handler)
+	} else {
+		handler = basicAuthMiddleware(s.cfg.Auth, handler)
+	}
 
 	server := &http.Server{
 		Addr:              s.cfg.Server.Addr,

@@ -749,6 +749,22 @@ function CheckForm({ initial, isEdit, saving, servers, onSave, onCancel }: {
   const [tagsInput, setTagsInput] = useState((initial.tags ?? []).join(', '))
   const type = (form.type ?? 'api') as CheckType
 
+  // Fetch notification channels to show which ones target this check
+  const { data: channels } = useQuery({
+    queryKey: ['notification-channels-raw'],
+    queryFn: async () => {
+      const token = localStorage.getItem('healthops_token')
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+      const res = await fetch('/api/v1/notification-channels', { headers })
+      if (!res.ok) return []
+      const body = await res.json()
+      return (body.data || []) as Array<{
+        id: string; name: string; type: string; enabled: boolean;
+        checkIds?: string[]; severities?: string[];
+      }>
+    },
+  })
+
   const set = <K extends keyof CheckConfig>(key: K, value: CheckConfig[K]) =>
     setForm(f => ({ ...f, [key]: value }))
 
@@ -1004,6 +1020,53 @@ function CheckForm({ initial, isEdit, saving, servers, onSave, onCancel }: {
           </div>
         </Field>
       </div>
+
+      {/* Notification Channels linked to this check */}
+      {isEdit && form.id && channels && channels.length > 0 && (
+        <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-700">
+          <div className="mb-2 flex items-center gap-2">
+            <Bell className="h-4 w-4 text-slate-500" />
+            <h4 className="text-xs font-semibold text-slate-700 dark:text-slate-300">Notification Channels</h4>
+            <span className="text-[10px] text-slate-400">(channels targeting this check)</span>
+          </div>
+          <div className="space-y-1">
+            {channels.map(ch => {
+              const linked = !ch.checkIds?.length || ch.checkIds.includes(form.id!)
+              return (
+                <div key={ch.id} className="flex items-center gap-2 rounded px-2 py-1.5 text-xs">
+                  <span className={cn(
+                    'h-2 w-2 rounded-full',
+                    ch.enabled && linked ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600',
+                  )} />
+                  <span className={cn(
+                    'font-medium',
+                    linked ? 'text-slate-700 dark:text-slate-300' : 'text-slate-400 dark:text-slate-500',
+                  )}>
+                    {ch.name}
+                  </span>
+                  <span className="text-[10px] text-slate-400 capitalize">{ch.type}</span>
+                  {ch.severities && ch.severities.length > 0 && (
+                    <span className="ml-auto text-[10px] text-slate-400">
+                      {ch.severities.join(', ')}
+                    </span>
+                  )}
+                  <span className={cn(
+                    'ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-medium',
+                    linked
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400'
+                      : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400',
+                  )}>
+                    {linked ? 'ACTIVE' : 'NOT LINKED'}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+          <p className="mt-2 text-[10px] text-slate-400">
+            Manage channel routing from Notification Channels page
+          </p>
+        </div>
+      )}
 
       <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
         <button type="button" onClick={onCancel} className={btnSecondary}>Cancel</button>

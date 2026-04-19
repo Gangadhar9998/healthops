@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { ToastProvider } from './components/Toast'
 import { ConfirmProvider } from './components/ConfirmDialog'
+import { AuthProvider } from './hooks/useAuth'
 import App from './App'
 import './index.css'
 
@@ -25,7 +26,9 @@ createRoot(document.getElementById('root')!).render(
         <BrowserRouter>
           <ToastProvider>
             <ConfirmProvider>
-              <App />
+              <AuthProvider>
+                <App />
+              </AuthProvider>
             </ConfirmProvider>
           </ToastProvider>
         </BrowserRouter>

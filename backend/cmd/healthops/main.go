@@ -52,14 +52,22 @@ func main() {
 
 	service := monitoring.NewService(cfg, store, logger)
 
+	// Initialize user store
+	dataDir := resolvePath("DATA_DIR", filepath.Join("backend", "data"), "data")
+	userStore, err := monitoring.NewUserStore(dataDir)
+	if err != nil {
+		logger.Printf("Warning: Failed to init user store: %v", err)
+	} else {
+		service.SetUserStore(userStore)
+		logger.Printf("User management initialized (default admin/admin)")
+	}
+
 	// Initialize incident manager
 	incidentRepo := monitoring.NewMemoryIncidentRepository()
 	incidentManager := monitoring.NewIncidentManager(incidentRepo, logger)
 	service.SetIncidentManager(incidentManager)
 
 	// Initialize generic repositories (notification outbox, AI queue, snapshots)
-	dataDir := resolvePath("DATA_DIR", filepath.Join("backend", "data"), "data")
-
 	outbox, err := notify.NewFileNotificationOutbox(filepath.Join(dataDir, "notification_outbox.jsonl"))
 	if err != nil {
 		logger.Printf("Warning: Failed to init notification outbox: %v", err)
@@ -74,6 +82,12 @@ func main() {
 	var notificationDispatcher *notify.NotificationDispatcher
 	if channelStore != nil {
 		notificationDispatcher = notify.NewNotificationDispatcher(channelStore, outbox, logger)
+		// Set dashboard URL for email links
+		addr := cfg.Server.Addr
+		if addr == "" || addr == ":8080" {
+			addr = "http://localhost:8080"
+		}
+		notificationDispatcher.SetDashboardURL(addr)
 		notificationAPIHandler := notify.NewNotificationAPIHandler(channelStore, notificationDispatcher, cfg)
 		service.SetNotifyRoutes(notificationAPIHandler)
 		logger.Printf("Notification channels initialized")

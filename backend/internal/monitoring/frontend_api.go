@@ -73,6 +73,7 @@ func (e *AlertRuleEngine) AddRule(rule AlertRule) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.rules = append(e.rules, rule)
+	e.persist()
 }
 
 // GetRule returns a single alert rule by ID.
@@ -94,6 +95,7 @@ func (e *AlertRuleEngine) UpdateRule(rule AlertRule) error {
 	for i, r := range e.rules {
 		if r.ID == rule.ID {
 			e.rules[i] = rule
+			e.persist()
 			return nil
 		}
 	}
@@ -107,6 +109,7 @@ func (e *AlertRuleEngine) DeleteRule(id string) error {
 	for i, r := range e.rules {
 		if r.ID == id {
 			e.rules = append(e.rules[:i], e.rules[i+1:]...)
+			e.persist()
 			return nil
 		}
 	}
@@ -481,6 +484,13 @@ func (s *Service) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Try JWT first
+	if s.userAPI != nil {
+		s.userAPI.HandleMe(w, r)
+		return
+	}
+
+	// Legacy basic auth
 	info := AuthInfo{
 		Username:    ExtractActorFromRequest(r, s.cfg),
 		AuthEnabled: s.cfg.Auth.Enabled,

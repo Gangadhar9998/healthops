@@ -1,7 +1,10 @@
 package monitoring
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +16,7 @@ type AlertRuleEngine struct {
 	mu            sync.RWMutex
 	lastTriggered map[string]time.Time // ruleID+checkID -> last triggered time
 	logger        Logger
+	filePath      string // path for persisting rules to disk
 }
 
 // Logger defines the logging interface used by the alert engine.
@@ -26,6 +30,58 @@ func NewAlertRuleEngine(rules []AlertRule, logger Logger) *AlertRuleEngine {
 		rules:         rules,
 		lastTriggered: make(map[string]time.Time),
 		logger:        logger,
+	}
+}
+
+// SetFilePath sets the file path for persisting rules and saves current rules.
+func (e *AlertRuleEngine) SetFilePath(path string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.filePath = path
+}
+
+// PersistIfNeeded writes rules to disk if the file doesn't exist yet.
+func (e *AlertRuleEngine) PersistIfNeeded() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.filePath == "" {
+		return
+	}
+	if _, err := os.Stat(e.filePath); err != nil {
+		e.persist()
+	}
+}
+
+// persist saves current rules to disk. Caller must hold e.mu.
+func (e *AlertRuleEngine) persist() {
+	if e.filePath == "" {
+		return
+	}
+	data, err := json.MarshalIndent(e.rules, "", "  ")
+	if err != nil {
+		if e.logger != nil {
+			e.logger.Printf("Warning: failed to marshal alert rules: %v", err)
+		}
+		return
+	}
+	dir := filepath.Dir(e.filePath)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		if e.logger != nil {
+			e.logger.Printf("Warning: failed to create alert rules dir: %v", err)
+		}
+		return
+	}
+	tmp := e.filePath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o640); err != nil {
+		if e.logger != nil {
+			e.logger.Printf("Warning: failed to write alert rules: %v", err)
+		}
+		return
+	}
+	if err := os.Rename(tmp, e.filePath); err != nil {
+		if e.logger != nil {
+			e.logger.Printf("Warning: failed to rename alert rules file: %v", err)
+		}
 	}
 }
 
@@ -268,12 +324,89 @@ func (e *AlertRuleEngine) sendToChannel(alert Alert, channel AlertChannel) {
 	}
 }
 
-// LoadRules creates alert rules from configuration.
-// This is a placeholder for future config-based rule loading.
+// LoadRulesFromConfig loads alert rules from the data file, falling back to defaults.
 func LoadRulesFromConfig(cfg interface{}) ([]AlertRule, error) {
-	// For now, return empty rules. In the future, this will parse
-	// alert rules from the config file or a separate rules file.
-	return []AlertRule{}, nil
+	rulesPath := filepath.Join("data", "alert_rules.json")
+	data, err := os.ReadFile(rulesPath)
+	if err == nil && len(data) > 0 {
+		var rules []AlertRule
+		if jsonErr := json.Unmarshal(data, &rules); jsonErr == nil {
+			return rules, nil
+		}
+	}
+	// No persisted rules — return sensible defaults
+	return DefaultAlertRules(), nil
+}
+
+// DefaultAlertRules returns practical out-of-the-box alert rules.
+func DefaultAlertRules() []AlertRule {
+	return []AlertRule{
+		{
+			ID:              "check-down-critical",
+			Name:            "Check Down",
+			Enabled:         true,
+			CheckIDs:        nil, // applies to all checks
+			Severity:        "critical",
+			CooldownMinutes: 5,
+			Description:     "Fires when any health check reports unhealthy",
+			Channels:        []AlertChannel{{Type: "log"}},
+			Conditions: []AlertCondition{
+				{Field: "healthy", Operator: OperatorEquals, Value: false},
+			},
+		},
+		{
+			ID:              "high-latency-warning",
+			Name:            "High Latency",
+			Enabled:         true,
+			CheckIDs:        nil,
+			Severity:        "warning",
+			CooldownMinutes: 10,
+			Description:     "Fires when response time exceeds 3 seconds",
+			Channels:        []AlertChannel{{Type: "log"}},
+			Conditions: []AlertCondition{
+				{Field: "durationMs", Operator: OperatorGreaterThan, Value: float64(3000)},
+			},
+		},
+		{
+			ID:              "critical-latency",
+			Name:            "Critical Latency",
+			Enabled:         true,
+			CheckIDs:        nil,
+			Severity:        "critical",
+			CooldownMinutes: 5,
+			Description:     "Fires when response time exceeds 10 seconds",
+			Channels:        []AlertChannel{{Type: "log"}},
+			Conditions: []AlertCondition{
+				{Field: "durationMs", Operator: OperatorGreaterThan, Value: float64(10000)},
+			},
+		},
+		{
+			ID:              "api-error-status",
+			Name:            "API Error Response",
+			Enabled:         true,
+			CheckIDs:        nil,
+			Severity:        "critical",
+			CooldownMinutes: 5,
+			Description:     "Fires when a check returns error status",
+			Channels:        []AlertChannel{{Type: "log"}},
+			Conditions: []AlertCondition{
+				{Field: "status", Operator: OperatorEquals, Value: "error"},
+			},
+		},
+		{
+			ID:              "timeout-warning",
+			Name:            "Check Timeout",
+			Enabled:         true,
+			CheckIDs:        nil,
+			Severity:        "warning",
+			CooldownMinutes: 10,
+			Description:     "Fires when a check times out",
+			Channels:        []AlertChannel{{Type: "log"}},
+			Conditions: []AlertCondition{
+				{Field: "status", Operator: OperatorEquals, Value: "timeout"},
+			},
+		},
+	}
 }
 
 // Validate checks if an alert rule is valid.

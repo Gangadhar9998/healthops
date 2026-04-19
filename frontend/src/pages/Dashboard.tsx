@@ -93,8 +93,8 @@ export default function Dashboard() {
         />
         <MetricCard
           label="Active Incidents"
-          value={incidents?.length ?? 0}
-          subValue={incidents && incidents.length > 0 ? `${incidents.filter(i => i.severity === 'critical').length} critical` : 'All clear'}
+          value={incidents?.items.length ?? 0}
+          subValue={incidents && incidents.items.length > 0 ? `${incidents.items.filter((i: any) => i.severity === 'critical').length} critical` : 'All clear'}
           icon={<AlertTriangle className="h-5 w-5" />}
         />
         <MetricCard
@@ -177,8 +177,8 @@ export default function Dashboard() {
             </Link>
           </div>
           <div className="divide-y divide-slate-100 dark:divide-slate-800">
-            {incidents && incidents.length > 0 ? (
-              incidents.slice(0, 5).map((inc) => (
+            {incidents && incidents.items.length > 0 ? (
+              incidents.items.slice(0, 5).map((inc: any) => (
                 <Link
                   key={inc.id}
                   to={`/incidents/${inc.id}`}

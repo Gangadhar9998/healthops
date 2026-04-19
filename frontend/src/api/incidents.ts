@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { Incident, IncidentSnapshot } from '@/types'
+import type { Incident, IncidentSnapshot, PaginatedData } from '@/types'
 
 export const incidentsApi = {
   list: (params?: { status?: string; severity?: string; limit?: number; offset?: number }) => {
@@ -9,7 +9,7 @@ export const incidentsApi = {
     if (params?.limit) qs.set('limit', String(params.limit))
     if (params?.offset) qs.set('offset', String(params.offset))
     const q = qs.toString()
-    return api.get<Incident[]>(`/incidents${q ? `?${q}` : ''}`)
+    return api.get<PaginatedData<Incident>>(`/incidents${q ? `?${q}` : ''}`)
   },
   get: (id: string) => api.get<Incident>(`/incidents/${encodeURIComponent(id)}`),
   acknowledge: (id: string) => api.post(`/incidents/${encodeURIComponent(id)}/acknowledge`),

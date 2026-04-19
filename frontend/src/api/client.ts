@@ -10,13 +10,22 @@ class APIError extends Error {
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const url = `${API_BASE}${path}`
+  const token = localStorage.getItem('healthops_token')
   const res = await fetch(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options?.headers,
     },
   })
+
+  if (res.status === 401) {
+    localStorage.removeItem('healthops_token')
+    localStorage.removeItem('healthops_user')
+    window.location.href = '/login'
+    throw new APIError(401, 'Session expired')
+  }
 
   if (!res.ok) {
     let message = res.statusText
