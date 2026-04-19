@@ -4,6 +4,7 @@ import { Layout } from '@/components/Layout'
 import { LoadingState } from '@/components/LoadingState'
 
 const Dashboard = lazy(() => import('@/pages/Dashboard'))
+const Servers = lazy(() => import('@/pages/Servers'))
 const Checks = lazy(() => import('@/pages/Checks'))
 const CheckDetail = lazy(() => import('@/pages/CheckDetail'))
 const Incidents = lazy(() => import('@/pages/Incidents'))
@@ -24,6 +25,7 @@ export default function App() {
       <Routes>
         <Route element={<Layout />}>
           <Route index element={<Dashboard />} />
+          <Route path="servers" element={<Servers />} />
           <Route path="checks" element={<Checks />} />
           <Route path="checks/:id" element={<CheckDetail />} />
           <Route path="incidents" element={<Incidents />} />

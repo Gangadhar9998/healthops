@@ -70,6 +70,7 @@ export function checkTypeLabel(type: string): string {
     command: 'Command',
     log: 'Log',
     mysql: 'MySQL',
+    ssh: 'SSH',
   }
   return labels[type] ?? type
 }

@@ -50,12 +50,59 @@ func (c *Config) applyDefaults() {
 	if c.Workers <= 0 {
 		c.Workers = 8
 	}
+	for i := range c.Servers {
+		c.Servers[i].applyDefaults()
+	}
 	for i := range c.Checks {
 		c.Checks[i].applyDefaults()
 	}
 }
 
+func (s *RemoteServer) applyDefaults() {
+	if s.Port <= 0 {
+		s.Port = 22
+	}
+	if s.Enabled == nil {
+		enabled := true
+		s.Enabled = &enabled
+	}
+}
+
+func (s *RemoteServer) validate() error {
+	if err := validateName(s.Name); err != nil {
+		return err
+	}
+	if s.Host == "" {
+		return fmt.Errorf("host is required")
+	}
+	if s.User == "" {
+		return fmt.Errorf("user is required")
+	}
+	hasKey := s.KeyPath != "" || s.KeyEnv != ""
+	hasPassword := s.Password != "" || s.PasswordEnv != ""
+	if !hasKey && !hasPassword {
+		return fmt.Errorf("auth required: set keyPath/keyEnv or password/passwordEnv")
+	}
+	return nil
+}
+
 func (c *Config) validate() error {
+	// Validate servers
+	serverIDs := map[string]struct{}{}
+	for i := range c.Servers {
+		srv := &c.Servers[i]
+		if srv.ID == "" {
+			return fmt.Errorf("server at index %d must have an id", i)
+		}
+		if _, exists := serverIDs[srv.ID]; exists {
+			return fmt.Errorf("duplicate server id %q", srv.ID)
+		}
+		serverIDs[srv.ID] = struct{}{}
+		if err := srv.validate(); err != nil {
+			return fmt.Errorf("server %q: %w", srv.ID, err)
+		}
+	}
+
 	if len(c.Checks) == 0 {
 		return fmt.Errorf("config must define at least one check")
 	}
@@ -73,6 +120,13 @@ func (c *Config) validate() error {
 			return fmt.Errorf("duplicate check id %q", check.ID)
 		}
 		seen[check.ID] = struct{}{}
+
+		// Validate serverId references an existing server
+		if check.ServerId != "" {
+			if _, ok := serverIDs[check.ServerId]; !ok {
+				return fmt.Errorf("check %q references unknown server %q", check.ID, check.ServerId)
+			}
+		}
 
 		if err := check.validate(c); err != nil {
 			return fmt.Errorf("check %q: %w", check.ID, err)
@@ -99,8 +153,8 @@ func (c *CheckConfig) applyDefaults() {
 }
 
 func (c *CheckConfig) validate(cfg *Config) error {
-	if c.Name == "" {
-		return fmt.Errorf("name is required")
+	if err := validateName(c.Name); err != nil {
+		return err
 	}
 
 	// Validate per-check scheduling configuration
@@ -150,6 +204,24 @@ func (c *CheckConfig) validate(cfg *Config) error {
 		}
 		if c.FreshnessSeconds <= 0 {
 			return fmt.Errorf("freshnessSeconds is required for log checks")
+		}
+	case "ssh":
+		if c.SSH == nil {
+			return fmt.Errorf("ssh config block is required for ssh checks")
+		}
+		if c.SSH.Host == "" {
+			return fmt.Errorf("ssh.host is required for ssh checks")
+		}
+		if c.SSH.User == "" {
+			return fmt.Errorf("ssh.user is required for ssh checks")
+		}
+		hasKey := c.SSH.KeyPath != "" || c.SSH.KeyEnv != ""
+		hasPassword := c.SSH.Password != "" || c.SSH.PasswordEnv != ""
+		if !hasKey && !hasPassword {
+			return fmt.Errorf("ssh auth required: set keyPath/keyEnv or password/passwordEnv")
+		}
+		if c.SSH.Port <= 0 {
+			c.SSH.Port = 22
 		}
 	case "mysql":
 		if c.MySQL == nil {

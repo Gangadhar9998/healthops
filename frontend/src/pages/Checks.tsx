@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
-import { useState } from 'react'
-import { Search, ArrowUpDown } from 'lucide-react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useState, useMemo } from 'react'
+import { Search, ArrowUpDown, Server, X } from 'lucide-react'
 import { checksApi } from '@/api/checks'
 import { StatusBadge } from '@/components/StatusBadge'
 import { LoadingState } from '@/components/LoadingState'
@@ -17,11 +17,28 @@ import type { CheckConfig, CheckResult } from '@/types'
 type SortKey = 'name' | 'type' | 'status' | 'durationMs'
 
 export default function Checks() {
+  const location = useLocation()
+  const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState<string>('all')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [sortKey, setSortKey] = useState<SortKey>('name')
   const [sortAsc, setSortAsc] = useState(true)
+
+  // Derive server filter from URL param
+  const serverFilter = useMemo(() => {
+    const params = new URLSearchParams(location.search)
+    return params.get('server') || 'all'
+  }, [location.search])
+
+  // Update URL when server filter changes
+  const handleServerFilterChange = (val: string) => {
+    if (val === 'all') {
+      navigate('/checks', { replace: true })
+    } else {
+      navigate(`/checks?server=${encodeURIComponent(val)}`, { replace: true })
+    }
+  }
 
   const { data: checks, isLoading, error, refetch } = useQuery({
     queryKey: ['checks'],
@@ -36,6 +53,16 @@ export default function Checks() {
   })
 
   const { exportCSV } = useExport()
+
+  // Derive unique server names for filter dropdown (must be before early returns)
+  const serverNames = useMemo(() => {
+    if (!checks) return []
+    const names = new Set<string>()
+    for (const c of checks) {
+      if (c.server) names.add(c.server)
+    }
+    return Array.from(names).sort()
+  }, [checks])
 
   if (isLoading) return <LoadingState />
   if (error) return <ErrorState message={error.message} retry={() => refetch()} />
@@ -56,6 +83,7 @@ export default function Checks() {
   let filtered = checks.filter((c: CheckConfig) => {
     if (search && !c.name.toLowerCase().includes(search.toLowerCase()) && !c.id.toLowerCase().includes(search.toLowerCase())) return false
     if (typeFilter !== 'all' && c.type !== typeFilter) return false
+    if (serverFilter !== 'all' && c.server !== serverFilter) return false
     if (statusFilter !== 'all') {
       const lr = latestByCheck.get(c.id)
       if (!lr || lr.status !== statusFilter) return false
@@ -112,6 +140,25 @@ export default function Checks() {
         </div>
       </div>
 
+      {/* Server filter banner */}
+      {serverFilter !== 'all' && (
+        <div className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2.5 dark:border-blue-900 dark:bg-blue-950/30">
+          <Server className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+          <span className="text-sm font-medium text-blue-800 dark:text-blue-300">
+            Showing checks for server: <span className="font-bold">{serverFilter}</span>
+          </span>
+          <span className="text-xs text-blue-600 dark:text-blue-400">
+            ({filtered.length} check{filtered.length !== 1 ? 's' : ''})
+          </span>
+          <button
+            onClick={() => handleServerFilterChange('all')}
+            className="ml-auto rounded-md p-1 text-blue-600 hover:bg-blue-100 dark:text-blue-400 dark:hover:bg-blue-900/50"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 sm:max-w-xs">
@@ -142,6 +189,19 @@ export default function Checks() {
           <option value="warning">Warning</option>
           <option value="critical">Critical</option>
           <option value="unknown">Unknown</option>
+        </select>
+        <select
+          value={serverFilter}
+          onChange={(e) => handleServerFilterChange(e.target.value)}
+          className={cn(
+            "rounded-lg border px-3 py-2 text-sm focus:border-blue-500 focus:outline-none",
+            serverFilter !== 'all'
+              ? "border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-700 dark:bg-blue-950/30 dark:text-blue-300"
+              : "border-slate-200 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300",
+          )}
+        >
+          <option value="all">All servers</option>
+          {serverNames.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
       </div>
 

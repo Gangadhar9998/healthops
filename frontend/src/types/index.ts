@@ -7,7 +7,7 @@
 export interface CheckConfig {
   id: string
   name: string
-  type: 'api' | 'tcp' | 'process' | 'command' | 'log' | 'mysql'
+  type: 'api' | 'tcp' | 'process' | 'command' | 'log' | 'mysql' | 'ssh'
   server?: string
   application?: string
   target?: string
@@ -28,6 +28,19 @@ export interface CheckConfig {
   tags?: string[]
   metadata?: Record<string, string>
   mysql?: MySQLCheckConfig
+  ssh?: SSHCheckConfig
+  serverId?: string
+}
+
+export interface SSHCheckConfig {
+  host: string
+  port?: number
+  user: string
+  keyPath?: string
+  keyEnv?: string
+  password?: string
+  passwordEnv?: string
+  metrics?: string[]
 }
 
 export interface MySQLCheckConfig {
@@ -315,6 +328,29 @@ export interface SafeConfigView {
   workers: number
   allowCommandChecks: boolean
   totalChecks: number
+  totalServers: number
+}
+
+// --- Remote Servers ---
+
+export interface RemoteServer {
+  id: string
+  name: string
+  host: string
+  port: number
+  user: string
+  keyPath?: string
+  keyEnv?: string
+  password?: string
+  passwordEnv?: string
+  tags?: string[]
+  enabled: boolean
+}
+
+export interface ServerTestResult {
+  success: boolean
+  output?: string
+  error?: string
 }
 
 export interface SSEPayload {

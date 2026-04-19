@@ -40,6 +40,20 @@ func NewRunner(cfg *Config, store Store) *Runner {
 	}
 }
 
+// resolveServer looks up a RemoteServer by ID from the config.
+// Returns nil if serverId is empty or not found.
+func (r *Runner) resolveServer(serverId string) *RemoteServer {
+	if serverId == "" {
+		return nil
+	}
+	for i := range r.cfg.Servers {
+		if r.cfg.Servers[i].ID == serverId {
+			return &r.cfg.Servers[i]
+		}
+	}
+	return nil
+}
+
 // SetMetricsCollector sets the metrics collector for the runner
 func (r *Runner) SetMetricsCollector(mc *MetricsCollector) {
 	r.metrics = mc
@@ -181,6 +195,8 @@ func (r *Runner) executeCheck(ctx context.Context, check CheckConfig) CheckResul
 		err = r.runLogFreshness(checkCtx, check, &result)
 	case "mysql":
 		err = r.runMySQL(checkCtx, check, &result)
+	case "ssh":
+		err = r.runSSH(checkCtx, check, &result)
 	default:
 		err = fmt.Errorf("unsupported check type %q", check.Type)
 	}
@@ -259,11 +275,27 @@ func (r *Runner) runTCP(ctx context.Context, check CheckConfig, result *CheckRes
 }
 
 func (r *Runner) runProcess(ctx context.Context, check CheckConfig, result *CheckResult) error {
-	binary, args := processListCommand()
-	cmd := exec.CommandContext(ctx, binary, args...)
-	output, err := cmd.Output()
-	if err != nil {
-		return err
+	var output []byte
+	var err error
+
+	if srv := r.resolveServer(check.ServerId); srv != nil {
+		// Remote: run ps via SSH on the target server
+		timeout := time.Duration(check.TimeoutSeconds) * time.Second
+		if timeout <= 0 {
+			timeout = 5 * time.Second
+		}
+		output, err = sshDialAndRun(srv.ToSSHConfig(), "ps -eo pid=,args=", timeout)
+		if err != nil {
+			return fmt.Errorf("remote process check on %s: %w", srv.Host, err)
+		}
+	} else {
+		// Local
+		binary, args := processListCommand()
+		cmd := exec.CommandContext(ctx, binary, args...)
+		output, err = cmd.Output()
+		if err != nil {
+			return err
+		}
 	}
 
 	matched := 0
@@ -288,11 +320,28 @@ func (r *Runner) runProcess(ctx context.Context, check CheckConfig, result *Chec
 // The command is executed via 'sh -c' which allows shell operators (pipes, redirects, etc.).
 // NEVER pass user input directly into check.Command - config files must be tightly controlled.
 func (r *Runner) runCommand(ctx context.Context, check CheckConfig, result *CheckResult) error {
-	cmd := exec.CommandContext(ctx, "sh", "-c", check.Command)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("command failed: %w: %s", err, strings.TrimSpace(string(output)))
+	var output []byte
+	var err error
+
+	if srv := r.resolveServer(check.ServerId); srv != nil {
+		// Remote: run command via SSH on the target server
+		timeout := time.Duration(check.TimeoutSeconds) * time.Second
+		if timeout <= 0 {
+			timeout = 5 * time.Second
+		}
+		output, err = sshDialAndRun(srv.ToSSHConfig(), check.Command, timeout)
+		if err != nil {
+			return fmt.Errorf("remote command on %s failed: %w: %s", srv.Host, err, strings.TrimSpace(string(output)))
+		}
+	} else {
+		// Local
+		cmd := exec.CommandContext(ctx, "sh", "-c", check.Command)
+		output, err = cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("command failed: %w: %s", err, strings.TrimSpace(string(output)))
+		}
 	}
+
 	result.Metrics["outputBytes"] = float64(len(output))
 	if check.ExpectedContains != "" && !bytes.Contains(output, []byte(check.ExpectedContains)) {
 		return fmt.Errorf("expected command output to contain %q", check.ExpectedContains)
@@ -301,6 +350,31 @@ func (r *Runner) runCommand(ctx context.Context, check CheckConfig, result *Chec
 }
 
 func (r *Runner) runLogFreshness(ctx context.Context, check CheckConfig, result *CheckResult) error {
+	if srv := r.resolveServer(check.ServerId); srv != nil {
+		// Remote: check file age via SSH using stat
+		timeout := time.Duration(check.TimeoutSeconds) * time.Second
+		if timeout <= 0 {
+			timeout = 5 * time.Second
+		}
+		// Use stat to get modification time, compute age in seconds
+		cmd := fmt.Sprintf("stat -c %%Y %q 2>/dev/null || stat -f %%m %q 2>/dev/null", check.Path, check.Path)
+		output, err := sshDialAndRun(srv.ToSSHConfig(), cmd, timeout)
+		if err != nil {
+			return fmt.Errorf("remote log check on %s: %w", srv.Host, err)
+		}
+		var mtime int64
+		if _, err := fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &mtime); err != nil {
+			return fmt.Errorf("failed to parse remote file mtime: %s", strings.TrimSpace(string(output)))
+		}
+		age := time.Since(time.Unix(mtime, 0))
+		result.Metrics["ageSeconds"] = age.Seconds()
+		if check.FreshnessSeconds > 0 && age > time.Duration(check.FreshnessSeconds)*time.Second {
+			return fmt.Errorf("log heartbeat stale: last update %.0fs ago", age.Seconds())
+		}
+		return nil
+	}
+
+	// Local
 	info, err := os.Stat(check.Path)
 	if err != nil {
 		return err
@@ -471,6 +545,33 @@ func (r *Runner) runMySQL(ctx context.Context, check CheckConfig, result *CheckR
 			}
 		}
 	}
+
+	return nil
+}
+
+func (r *Runner) runSSH(ctx context.Context, check CheckConfig, result *CheckResult) error {
+	if check.SSH == nil {
+		return fmt.Errorf("ssh config block is required")
+	}
+
+	timeout := time.Duration(check.TimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+
+	metrics, err := collectSSHMetrics(check.SSH, timeout)
+	if err != nil {
+		return err
+	}
+
+	for k, v := range metrics.toMap() {
+		result.Metrics[k] = v
+	}
+
+	status, messages := buildSSHStatus(metrics, check)
+	result.Status = status
+	result.Healthy = status == "healthy"
+	result.Message = strings.Join(messages, "; ")
 
 	return nil
 }

@@ -6,13 +6,48 @@ import (
 )
 
 type Config struct {
-	Server               ServerConfig  `json:"server"`
-	Auth                 AuthConfig    `json:"auth"`
-	RetentionDays        int           `json:"retentionDays"`
-	CheckIntervalSeconds int           `json:"checkIntervalSeconds"`
-	Workers              int           `json:"workers"`
-	AllowCommandChecks   bool          `json:"allowCommandChecks"`
-	Checks               []CheckConfig `json:"checks"`
+	Server               ServerConfig   `json:"server"`
+	Auth                 AuthConfig     `json:"auth"`
+	RetentionDays        int            `json:"retentionDays"`
+	CheckIntervalSeconds int            `json:"checkIntervalSeconds"`
+	Workers              int            `json:"workers"`
+	AllowCommandChecks   bool           `json:"allowCommandChecks"`
+	Servers              []RemoteServer `json:"servers,omitempty"`
+	Checks               []CheckConfig  `json:"checks"`
+}
+
+// RemoteServer defines SSH connection details for a managed server.
+// Checks can reference a server by ID to run remotely via SSH.
+type RemoteServer struct {
+	ID          string   `json:"id" bson:"id"`
+	Name        string   `json:"name" bson:"name"`
+	Host        string   `json:"host" bson:"host"`
+	Port        int      `json:"port,omitempty" bson:"port,omitempty"`
+	User        string   `json:"user" bson:"user"`
+	KeyPath     string   `json:"keyPath,omitempty" bson:"keyPath,omitempty"`
+	KeyEnv      string   `json:"keyEnv,omitempty" bson:"keyEnv,omitempty"`
+	Password    string   `json:"password,omitempty" bson:"password,omitempty"`
+	PasswordEnv string   `json:"passwordEnv,omitempty" bson:"passwordEnv,omitempty"`
+	Tags        []string `json:"tags,omitempty" bson:"tags,omitempty"`
+	Enabled     *bool    `json:"enabled,omitempty" bson:"enabled,omitempty"`
+}
+
+// IsEnabled returns whether the server is enabled (defaults to true).
+func (s *RemoteServer) IsEnabled() bool {
+	return s.Enabled == nil || *s.Enabled
+}
+
+// ToSSHConfig converts a RemoteServer to SSHCheckConfig for SSH connections.
+func (s *RemoteServer) ToSSHConfig() *SSHCheckConfig {
+	return &SSHCheckConfig{
+		Host:        s.Host,
+		Port:        s.Port,
+		User:        s.User,
+		KeyPath:     s.KeyPath,
+		KeyEnv:      s.KeyEnv,
+		Password:    s.Password,
+		PasswordEnv: s.PasswordEnv,
+	}
 }
 
 type ServerConfig struct {
@@ -51,7 +86,9 @@ type CheckConfig struct {
 	Enabled            *bool             `json:"enabled,omitempty" bson:"enabled,omitempty"`
 	Tags               []string          `json:"tags,omitempty" bson:"tags,omitempty"`
 	Metadata           map[string]string `json:"metadata,omitempty" bson:"metadata,omitempty"`
+	ServerId           string            `json:"serverId,omitempty" bson:"serverId,omitempty"`
 	MySQL              *MySQLCheckConfig `json:"mysql,omitempty" bson:"mysql,omitempty"`
+	SSH                *SSHCheckConfig   `json:"ssh,omitempty" bson:"ssh,omitempty"`
 }
 
 type State struct {

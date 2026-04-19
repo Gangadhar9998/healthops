@@ -47,6 +47,7 @@ func (h *AIAPIHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/ai/prompts/", h.handleAIPromptByID)
 	mux.HandleFunc("/api/v1/ai/analyze/", h.handleAnalyzeIncident)
 	mux.HandleFunc("/api/v1/ai/health", h.handleAIProviderHealth)
+	mux.HandleFunc("/api/v1/ai/results", h.handleAIResultsList)
 	mux.HandleFunc("/api/v1/ai/results/", h.handleAIResults)
 	mux.HandleFunc("/api/v1/mysql/ai/ask", h.handleMySQLAIAsk)
 }
@@ -560,6 +561,25 @@ func (h *AIAPIHandler) handleAIProviderHealth(w http.ResponseWriter, r *http.Req
 // --- AI Analysis Results ---
 
 // GET /api/v1/ai/results/{incidentId} — get analysis results for an incident
+// GET /api/v1/ai/results — list all AI analysis results
+func (h *AIAPIHandler) handleAIResultsList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	if h.aiService == nil || h.aiService.aiQueue == nil {
+		writeAPIResponse(w, http.StatusOK, NewAPIResponse([]AIAnalysisResult{}))
+		return
+	}
+
+	results := h.aiService.aiQueue.AllResults(100)
+	if results == nil {
+		results = []AIAnalysisResult{}
+	}
+	writeAPIResponse(w, http.StatusOK, NewAPIResponse(results))
+}
+
 func (h *AIAPIHandler) handleAIResults(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)

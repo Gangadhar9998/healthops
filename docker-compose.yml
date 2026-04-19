@@ -16,6 +16,7 @@ services:
       - MYSQL_DSN=healthmon:healthmon123@tcp(mysql:3306)/healthmon
     volumes:
       - healthmon_data:/app/data
+      - ~/.ssh/id_ed25519:/app/.ssh/id_ed25519:ro
     depends_on:
       mongo:
         condition: service_started
