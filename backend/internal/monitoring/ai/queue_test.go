@@ -1,10 +1,12 @@
-package monitoring
+package ai
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"medics-health-check/backend/internal/monitoring"
 )
 
 func TestFileAIQueue_EnqueueAndListPending(t *testing.T) {
@@ -81,7 +83,7 @@ func TestFileAIQueue_Complete(t *testing.T) {
 	_ = q.Enqueue("inc-1", "v1")
 	_, _ = q.ClaimPending(1)
 
-	result := AIAnalysisResult{
+	result := monitoring.AIAnalysisResult{
 		Analysis:    "Root cause: connection leak",
 		Suggestions: []string{"Increase pool size", "Fix connection leak"},
 		Severity:    "critical",
@@ -102,7 +104,7 @@ func TestFileAIQueue_CompleteNotFound(t *testing.T) {
 	dir := t.TempDir()
 	q, _ := NewFileAIQueue(dir)
 
-	err := q.Complete("nonexistent", AIAnalysisResult{})
+	err := q.Complete("nonexistent", monitoring.AIAnalysisResult{})
 	if err == nil {
 		t.Fatal("expected error for nonexistent incident")
 	}
@@ -143,12 +145,12 @@ func TestFileAIQueue_PruneBefore(t *testing.T) {
 
 	// Enqueue with old timestamp
 	q.mu.Lock()
-	oldItem := AIQueueItem{
+	oldItem := monitoring.AIQueueItem{
 		IncidentID: "old", PromptVersion: "v1",
 		Status: "completed", CreatedAt: now.Add(-48 * time.Hour),
 	}
 	q.queue = append(q.queue, oldItem)
-	_ = appendJSONLFile(q.queuePath, oldItem)
+	_ = monitoring.AppendJSONLFile(q.queuePath, oldItem)
 	q.mu.Unlock()
 
 	_ = q.Enqueue("new", "v1") // recent
@@ -211,7 +213,7 @@ func TestFileAIQueue_DedupAllowsAfterCompletion(t *testing.T) {
 
 	_ = q.Enqueue("inc-1", "v1")
 	_, _ = q.ClaimPending(1)
-	_ = q.Complete("inc-1", AIAnalysisResult{Analysis: "done"})
+	_ = q.Complete("inc-1", monitoring.AIAnalysisResult{Analysis: "done"})
 
 	// Should be able to enqueue again after completion
 	_ = q.Enqueue("inc-1", "v2")

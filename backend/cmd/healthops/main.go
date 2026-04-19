@@ -10,6 +10,9 @@ import (
 	"syscall"
 
 	"medics-health-check/backend/internal/monitoring"
+	"medics-health-check/backend/internal/monitoring/ai"
+	"medics-health-check/backend/internal/monitoring/mysql"
+	"medics-health-check/backend/internal/monitoring/notify"
 )
 
 func main() {
@@ -57,26 +60,26 @@ func main() {
 	// Initialize generic repositories (notification outbox, AI queue, snapshots)
 	dataDir := resolvePath("DATA_DIR", filepath.Join("backend", "data"), "data")
 
-	outbox, err := monitoring.NewFileNotificationOutbox(filepath.Join(dataDir, "notification_outbox.jsonl"))
+	outbox, err := notify.NewFileNotificationOutbox(filepath.Join(dataDir, "notification_outbox.jsonl"))
 	if err != nil {
 		logger.Printf("Warning: Failed to init notification outbox: %v", err)
 	}
 
 	// Initialize notification channel store and dispatcher
-	channelStore, err := monitoring.NewNotificationChannelStore(dataDir)
+	channelStore, err := notify.NewNotificationChannelStore(dataDir)
 	if err != nil {
 		logger.Printf("Warning: Failed to init notification channel store: %v", err)
 	}
 
-	var notificationDispatcher *monitoring.NotificationDispatcher
+	var notificationDispatcher *notify.NotificationDispatcher
 	if channelStore != nil {
-		notificationDispatcher = monitoring.NewNotificationDispatcher(channelStore, outbox, logger)
-		notificationAPIHandler := monitoring.NewNotificationAPIHandler(channelStore, notificationDispatcher, cfg)
-		service.SetNotificationAPIHandler(notificationAPIHandler)
+		notificationDispatcher = notify.NewNotificationDispatcher(channelStore, outbox, logger)
+		notificationAPIHandler := notify.NewNotificationAPIHandler(channelStore, notificationDispatcher, cfg)
+		service.SetNotifyRoutes(notificationAPIHandler)
 		logger.Printf("Notification channels initialized")
 	}
 
-	aiQueue, err := monitoring.NewFileAIQueue(dataDir)
+	aiQueue, err := ai.NewFileAIQueue(dataDir)
 	if err != nil {
 		logger.Printf("Warning: Failed to init AI queue: %v", err)
 	}
@@ -97,13 +100,13 @@ func main() {
 	}
 
 	if hasMySQLChecks {
-		repo, err := monitoring.NewFileMySQLRepository(dataDir)
+		repo, err := mysql.NewFileMySQLRepository(dataDir)
 		if err != nil {
 			logger.Fatalf("init mysql repository: %v", err)
 		}
 		mysqlRepo = repo
 
-		sampler := monitoring.NewLiveMySQLSampler()
+		sampler := mysql.NewLiveMySQLSampler()
 		service.Runner().SetMySQLSampler(sampler)
 		service.Runner().SetMySQLRepo(mysqlRepo)
 
@@ -126,8 +129,9 @@ func main() {
 
 		// Set up MySQL API handler
 		var auditLogger *monitoring.AuditLogger // service creates its own; we pass nil and let it use the service's
-		mysqlAPIHandler := monitoring.NewMySQLAPIHandler(mysqlRepo, snapshotRepo, outbox, aiQueue, auditLogger, cfg)
-		service.SetMySQLAPIHandler(mysqlAPIHandler)
+		mysqlAPIHandler := mysql.NewMySQLAPIHandler(mysqlRepo, snapshotRepo, outbox, aiQueue, auditLogger, cfg)
+		service.SetMySQLRoutes(mysqlAPIHandler)
+		service.SetSnapshotRepo(snapshotRepo)
 
 		logger.Printf("MySQL monitoring enabled with %d default rules", len(mysqlRules))
 	}
@@ -146,21 +150,21 @@ func main() {
 	}
 
 	// Initialize BYOK AI service
-	aiConfigStore, err := monitoring.NewAIConfigStore(dataDir)
+	aiConfigStore, err := ai.NewAIConfigStore(dataDir)
 	if err != nil {
 		logger.Printf("Warning: Failed to init AI config store: %v", err)
 	}
 
 	if aiConfigStore != nil && aiQueue != nil {
-		aiService := monitoring.NewAIService(aiConfigStore, aiQueue, incidentRepo, snapshotRepo, store, logger)
+		aiService := ai.NewAIService(aiConfigStore, aiQueue, incidentRepo, snapshotRepo, store, logger)
 		aiService.StartWorker()
 		defer aiService.StopWorker()
 
-		aiAPIHandler := monitoring.NewAIAPIHandler(aiService, aiConfigStore, nil, cfg)
+		aiAPIHandler := ai.NewAIAPIHandler(aiService, aiConfigStore, nil, cfg)
 		if mysqlRepo != nil {
 			aiAPIHandler.SetMySQLRepo(mysqlRepo)
 		}
-		service.SetAIAPIHandler(aiAPIHandler)
+		service.SetAIRoutes(aiAPIHandler)
 
 		// Wire auto-analysis + notifications: trigger when incidents are created
 		incidentManager.SetOnIncidentCreated(func(incident monitoring.Incident) {

@@ -1,4 +1,4 @@
-package monitoring
+package notify
 
 import (
 	"encoding/json"

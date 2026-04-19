@@ -37,7 +37,7 @@ func TestResponseEnvelopeContract(t *testing.T) {
 		{
 			name: "healthz returns success envelope",
 			handler: func(w http.ResponseWriter, r *http.Request) {
-				writeAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]string{"status": "ok"}))
+				WriteAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]string{"status": "ok"}))
 			},
 			method:         "GET",
 			wantStatusCode: http.StatusOK,
@@ -48,7 +48,7 @@ func TestResponseEnvelopeContract(t *testing.T) {
 		{
 			name: "error response has error envelope",
 			handler: func(w http.ResponseWriter, r *http.Request) {
-				writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid input"))
+				WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid input"))
 			},
 			method:         "GET",
 			wantStatusCode: http.StatusBadRequest,

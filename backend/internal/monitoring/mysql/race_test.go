@@ -1,4 +1,4 @@
-package monitoring
+package mysql
 
 import (
 	"context"
@@ -7,16 +7,20 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"medics-health-check/backend/internal/monitoring"
+	"medics-health-check/backend/internal/monitoring/ai"
+	"medics-health-check/backend/internal/monitoring/notify"
 )
 
-// concurrentMockSampler implements MySQLSampler for concurrency testing.
+// concurrentMockSampler implements monitoring.MySQLSampler for concurrency testing.
 type concurrentMockSampler struct {
 	mu     sync.Mutex
 	calls  int
-	sample MySQLSample
+	sample monitoring.MySQLSample
 }
 
-func (m *concurrentMockSampler) Collect(ctx context.Context, check CheckConfig) (MySQLSample, error) {
+func (m *concurrentMockSampler) Collect(ctx context.Context, check monitoring.CheckConfig) (monitoring.MySQLSample, error) {
 	m.mu.Lock()
 	m.calls++
 	m.mu.Unlock()
@@ -25,7 +29,7 @@ func (m *concurrentMockSampler) Collect(ctx context.Context, check CheckConfig) 
 
 func TestMySQLCollectorConcurrent(t *testing.T) {
 	sampler := &concurrentMockSampler{
-		sample: MySQLSample{
+		sample: monitoring.MySQLSample{
 			SampleID:       "s1",
 			CheckID:        "mysql-1",
 			Timestamp:      time.Now().UTC(),
@@ -40,7 +44,7 @@ func TestMySQLCollectorConcurrent(t *testing.T) {
 	wg.Add(goroutines)
 
 	ctx := context.Background()
-	check := CheckConfig{ID: "mysql-1", Name: "test-mysql", Type: "mysql"}
+	check := monitoring.CheckConfig{ID: "mysql-1", Name: "test-mysql", Type: "mysql"}
 
 	for i := 0; i < goroutines; i++ {
 		go func() {
@@ -78,7 +82,7 @@ func TestMySQLCollectorConcurrent(t *testing.T) {
 	for i := 0; i < repoWorkers; i++ {
 		go func(idx int) {
 			defer wg2.Done()
-			s := MySQLSample{
+			s := monitoring.MySQLSample{
 				CheckID:        "mysql-1",
 				Timestamp:      time.Now().UTC(),
 				Connections:    int64(idx * 10),
@@ -106,8 +110,8 @@ func TestMySQLCollectorConcurrent(t *testing.T) {
 
 func TestMySQLSchedulerConcurrent(t *testing.T) {
 	dir := t.TempDir()
-	rules := DefaultMySQLRules()
-	engine, err := NewMySQLRuleEngine(rules, dir)
+	rules := monitoring.DefaultMySQLRules()
+	engine, err := monitoring.NewMySQLRuleEngine(rules, dir)
 	if err != nil {
 		t.Fatalf("create rule engine: %v", err)
 	}
@@ -120,7 +124,7 @@ func TestMySQLSchedulerConcurrent(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			checkID := fmt.Sprintf("mysql-check-%d", idx)
-			sample := MySQLSample{
+			sample := monitoring.MySQLSample{
 				SampleID:       fmt.Sprintf("s-%d", idx),
 				CheckID:        checkID,
 				Timestamp:      time.Now().UTC(),
@@ -129,7 +133,7 @@ func TestMySQLSchedulerConcurrent(t *testing.T) {
 				ThreadsRunning: int64(idx),
 				SlowQueries:    int64(idx * 5),
 			}
-			delta := MySQLDelta{
+			delta := monitoring.MySQLDelta{
 				CheckID:           checkID,
 				IntervalSec:       60,
 				SlowQueriesDelta:  int64(idx),
@@ -145,8 +149,8 @@ func TestMySQLSchedulerConcurrent(t *testing.T) {
 	t.Logf("all %d concurrent Evaluate calls completed without race", goroutines)
 
 	// Verify state isolation: evaluate two distinct checks and confirm independent states
-	s1 := MySQLSample{SampleID: "iso-1", CheckID: "iso-a", Timestamp: time.Now().UTC(), Connections: 95, MaxConnections: 100}
-	s2 := MySQLSample{SampleID: "iso-2", CheckID: "iso-b", Timestamp: time.Now().UTC(), Connections: 10, MaxConnections: 100}
+	s1 := monitoring.MySQLSample{SampleID: "iso-1", CheckID: "iso-a", Timestamp: time.Now().UTC(), Connections: 95, MaxConnections: 100}
+	s2 := monitoring.MySQLSample{SampleID: "iso-2", CheckID: "iso-b", Timestamp: time.Now().UTC(), Connections: 10, MaxConnections: 100}
 
 	r1 := engine.Evaluate("iso-a", s1, nil)
 	r2 := engine.Evaluate("iso-b", s2, nil)
@@ -168,7 +172,7 @@ func TestMySQLSchedulerConcurrent(t *testing.T) {
 func TestMySQLOutboxConcurrent(t *testing.T) {
 	dir := t.TempDir()
 	outboxPath := filepath.Join(dir, "outbox.jsonl")
-	outbox, err := NewFileNotificationOutbox(outboxPath)
+	outbox, err := notify.NewFileNotificationOutbox(outboxPath)
 	if err != nil {
 		t.Fatalf("create outbox: %v", err)
 	}
@@ -186,7 +190,7 @@ func TestMySQLOutboxConcurrent(t *testing.T) {
 	for i := 0; i < enqueuers; i++ {
 		go func(idx int) {
 			defer wg.Done()
-			evt := NotificationEvent{
+			evt := monitoring.NotificationEvent{
 				IncidentID: fmt.Sprintf("inc-%d", idx),
 				Channel:    "slack",
 			}
@@ -220,7 +224,7 @@ func TestMySQLOutboxConcurrent(t *testing.T) {
 
 	// Test FileAIQueue concurrently
 	aiDir := t.TempDir()
-	aiQueue, err := NewFileAIQueue(aiDir)
+	aiQueue, err := ai.NewFileAIQueue(aiDir)
 	if err != nil {
 		t.Fatalf("create ai queue: %v", err)
 	}
@@ -259,7 +263,7 @@ func TestMySQLOutboxConcurrent(t *testing.T) {
 	for i := 0; i < aiCompleters; i++ {
 		go func(idx int) {
 			defer wg2.Done()
-			result := AIAnalysisResult{
+			result := monitoring.AIAnalysisResult{
 				IncidentID: fmt.Sprintf("ai-inc-%d", idx),
 				Analysis:   "test analysis",
 				CreatedAt:  time.Now().UTC(),
@@ -293,7 +297,7 @@ func TestMySQLRepositoryConcurrentReadWrite(t *testing.T) {
 		go func(wIdx int) {
 			defer wg.Done()
 			for s := 0; s < samplesPerWrite; s++ {
-				sample := MySQLSample{
+				sample := monitoring.MySQLSample{
 					CheckID:        fmt.Sprintf("check-%d", wIdx),
 					Timestamp:      time.Now().UTC(),
 					Connections:    int64(wIdx*10 + s),
@@ -343,7 +347,7 @@ func TestMySQLRepositoryConcurrentReadWrite(t *testing.T) {
 func TestMySQLSnapshotRepoConcurrent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "snapshots.jsonl")
-	repo, err := NewFileSnapshotRepository(path)
+	repo, err := monitoring.NewFileSnapshotRepository(path)
 	if err != nil {
 		t.Fatalf("create snapshot repo: %v", err)
 	}
@@ -358,7 +362,7 @@ func TestMySQLSnapshotRepoConcurrent(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			incID := fmt.Sprintf("inc-%d", idx)
-			snaps := []IncidentSnapshot{
+			snaps := []monitoring.IncidentSnapshot{
 				{
 					IncidentID:   incID,
 					SnapshotType: "mysql_sample",

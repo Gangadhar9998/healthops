@@ -25,7 +25,7 @@ type Runner struct {
 	mysqlRepo       MySQLMetricsRepository
 	mysqlRuleEngine *MySQLRuleEngine
 	incidentManager *IncidentManager
-	outbox          *FileNotificationOutbox
+	outbox          NotificationOutboxRepository
 	snapshotRepo    IncidentSnapshotRepository
 	running         bool
 	mu              sync.Mutex
@@ -434,7 +434,7 @@ func (r *Runner) SetIncidentManager(im *IncidentManager) {
 }
 
 // SetNotificationOutbox sets the notification outbox for alert delivery.
-func (r *Runner) SetNotificationOutbox(outbox *FileNotificationOutbox) {
+func (r *Runner) SetNotificationOutbox(outbox NotificationOutboxRepository) {
 	r.outbox = outbox
 }
 

@@ -1,4 +1,4 @@
-package monitoring
+package mysql
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+
+	"medics-health-check/backend/internal/monitoring"
 )
 
 // LiveMySQLSampler collects metrics from a real MySQL database.
@@ -21,14 +23,14 @@ func NewLiveMySQLSampler() *LiveMySQLSampler {
 // Collect gathers MySQL status variables and computes a sample.
 // SECURITY: DSN is resolved from the environment variable named in check.MySQL.DSNEnv.
 // The DSN value is never logged or returned in responses.
-func (s *LiveMySQLSampler) Collect(ctx context.Context, check CheckConfig) (MySQLSample, error) {
+func (s *LiveMySQLSampler) Collect(ctx context.Context, check monitoring.CheckConfig) (monitoring.MySQLSample, error) {
 	if check.MySQL == nil {
-		return MySQLSample{}, fmt.Errorf("mysql config block is required")
+		return monitoring.MySQLSample{}, fmt.Errorf("mysql config block is required")
 	}
 
 	dsn := os.Getenv(check.MySQL.DSNEnv)
 	if dsn == "" {
-		return MySQLSample{}, fmt.Errorf("environment variable %q is not set (required for mysql check %q)", check.MySQL.DSNEnv, check.ID)
+		return monitoring.MySQLSample{}, fmt.Errorf("environment variable %q is not set (required for mysql check %q)", check.MySQL.DSNEnv, check.ID)
 	}
 
 	connectTimeout := time.Duration(check.MySQL.ConnectTimeoutSeconds) * time.Second
@@ -43,7 +45,7 @@ func (s *LiveMySQLSampler) Collect(ctx context.Context, check CheckConfig) (MySQ
 
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
-		return MySQLSample{}, fmt.Errorf("open mysql connection: %w", err)
+		return monitoring.MySQLSample{}, fmt.Errorf("open mysql connection: %w", err)
 	}
 	defer db.Close()
 
@@ -53,24 +55,24 @@ func (s *LiveMySQLSampler) Collect(ctx context.Context, check CheckConfig) (MySQ
 	connCtx, connCancel := context.WithTimeout(ctx, connectTimeout)
 	defer connCancel()
 	if err := db.PingContext(connCtx); err != nil {
-		return MySQLSample{}, fmt.Errorf("mysql ping failed: %w", err)
+		return monitoring.MySQLSample{}, fmt.Errorf("mysql ping failed: %w", err)
 	}
 
 	queryCtx, queryCancel := context.WithTimeout(ctx, queryTimeout)
 	defer queryCancel()
 
-	sample := MySQLSample{
+	sample := monitoring.MySQLSample{
 		SampleID:  fmt.Sprintf("%s-%d", check.ID, time.Now().UnixNano()),
 		CheckID:   check.ID,
 		Timestamp: time.Now().UTC(),
 	}
 
 	if err := s.collectGlobalStatus(queryCtx, db, &sample); err != nil {
-		return MySQLSample{}, fmt.Errorf("collect global status: %w", err)
+		return monitoring.MySQLSample{}, fmt.Errorf("collect global status: %w", err)
 	}
 
 	if err := s.collectGlobalVariables(queryCtx, db, &sample); err != nil {
-		return MySQLSample{}, fmt.Errorf("collect global variables: %w", err)
+		return monitoring.MySQLSample{}, fmt.Errorf("collect global variables: %w", err)
 	}
 
 	if err := s.collectProcessList(queryCtx, db, &sample); err != nil {
@@ -96,7 +98,7 @@ func (s *LiveMySQLSampler) Collect(ctx context.Context, check CheckConfig) (MySQ
 	return sample, nil
 }
 
-func (s *LiveMySQLSampler) collectGlobalStatus(ctx context.Context, db *sql.DB, sample *MySQLSample) error {
+func (s *LiveMySQLSampler) collectGlobalStatus(ctx context.Context, db *sql.DB, sample *monitoring.MySQLSample) error {
 	rows, err := db.QueryContext(ctx, "SHOW GLOBAL STATUS")
 	if err != nil {
 		return err
@@ -117,7 +119,7 @@ func (s *LiveMySQLSampler) collectGlobalStatus(ctx context.Context, db *sql.DB, 
 	return rows.Err()
 }
 
-func (s *LiveMySQLSampler) collectGlobalVariables(ctx context.Context, db *sql.DB, sample *MySQLSample) error {
+func (s *LiveMySQLSampler) collectGlobalVariables(ctx context.Context, db *sql.DB, sample *monitoring.MySQLSample) error {
 	rows, err := db.QueryContext(ctx, "SHOW GLOBAL VARIABLES")
 	if err != nil {
 		return err
@@ -138,7 +140,7 @@ func (s *LiveMySQLSampler) collectGlobalVariables(ctx context.Context, db *sql.D
 	return rows.Err()
 }
 
-func (s *LiveMySQLSampler) applyStatusVar(name, value string, sample *MySQLSample) {
+func (s *LiveMySQLSampler) applyStatusVar(name, value string, sample *monitoring.MySQLSample) {
 	var v int64
 	if _, err := fmt.Sscanf(value, "%d", &v); err != nil {
 		return
@@ -202,7 +204,7 @@ func (s *LiveMySQLSampler) applyStatusVar(name, value string, sample *MySQLSampl
 	}
 }
 
-func (s *LiveMySQLSampler) applyVariableVar(name, value string, sample *MySQLSample) {
+func (s *LiveMySQLSampler) applyVariableVar(name, value string, sample *monitoring.MySQLSample) {
 	var v int64
 	if _, err := fmt.Sscanf(value, "%d", &v); err != nil {
 		return
@@ -218,26 +220,26 @@ func (s *LiveMySQLSampler) applyVariableVar(name, value string, sample *MySQLSam
 	}
 }
 
-func (s *LiveMySQLSampler) collectProcessList(ctx context.Context, db *sql.DB, sample *MySQLSample) error {
+func (s *LiveMySQLSampler) collectProcessList(ctx context.Context, db *sql.DB, sample *monitoring.MySQLSample) error {
 	rows, err := db.QueryContext(ctx, "SHOW FULL PROCESSLIST")
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 
-	var processes []MySQLProcess
+	var processes []monitoring.MySQLProcess
 	for rows.Next() {
 		var (
-			id                 int64
-			user, host         string
-			dbName, info       sql.NullString
-			command, state     sql.NullString
-			timeVal            int64
+			id             int64
+			user, host     string
+			dbName, info   sql.NullString
+			command, state sql.NullString
+			timeVal        int64
 		)
 		if err := rows.Scan(&id, &user, &host, &dbName, &command, &timeVal, &state, &info); err != nil {
 			continue
 		}
-		p := MySQLProcess{
+		p := monitoring.MySQLProcess{
 			ID:      id,
 			User:    user,
 			Host:    host,
@@ -253,7 +255,7 @@ func (s *LiveMySQLSampler) collectProcessList(ctx context.Context, db *sql.DB, s
 	return rows.Err()
 }
 
-func (s *LiveMySQLSampler) collectUserStats(ctx context.Context, db *sql.DB, sample *MySQLSample, check CheckConfig) error {
+func (s *LiveMySQLSampler) collectUserStats(ctx context.Context, db *sql.DB, sample *monitoring.MySQLSample, check monitoring.CheckConfig) error {
 	limit := 20
 	if check.MySQL != nil && check.MySQL.HostUserLimit > 0 {
 		limit = check.MySQL.HostUserLimit
@@ -266,9 +268,9 @@ func (s *LiveMySQLSampler) collectUserStats(ctx context.Context, db *sql.DB, sam
 	}
 	defer rows.Close()
 
-	var stats []MySQLUserStat
+	var stats []monitoring.MySQLUserStat
 	for rows.Next() {
-		var u MySQLUserStat
+		var u monitoring.MySQLUserStat
 		if err := rows.Scan(&u.User, &u.CurrentConnections, &u.TotalConnections); err != nil {
 			continue
 		}
@@ -278,7 +280,7 @@ func (s *LiveMySQLSampler) collectUserStats(ctx context.Context, db *sql.DB, sam
 	return rows.Err()
 }
 
-func (s *LiveMySQLSampler) collectHostStats(ctx context.Context, db *sql.DB, sample *MySQLSample, check CheckConfig) error {
+func (s *LiveMySQLSampler) collectHostStats(ctx context.Context, db *sql.DB, sample *monitoring.MySQLSample, check monitoring.CheckConfig) error {
 	limit := 20
 	if check.MySQL != nil && check.MySQL.HostUserLimit > 0 {
 		limit = check.MySQL.HostUserLimit
@@ -291,9 +293,9 @@ func (s *LiveMySQLSampler) collectHostStats(ctx context.Context, db *sql.DB, sam
 	}
 	defer rows.Close()
 
-	var stats []MySQLHostStat
+	var stats []monitoring.MySQLHostStat
 	for rows.Next() {
-		var h MySQLHostStat
+		var h monitoring.MySQLHostStat
 		if err := rows.Scan(&h.Host, &h.CurrentConnections, &h.TotalConnections); err != nil {
 			continue
 		}
@@ -303,7 +305,7 @@ func (s *LiveMySQLSampler) collectHostStats(ctx context.Context, db *sql.DB, sam
 	return rows.Err()
 }
 
-func (s *LiveMySQLSampler) collectTopQueries(ctx context.Context, db *sql.DB, sample *MySQLSample, check CheckConfig) error {
+func (s *LiveMySQLSampler) collectTopQueries(ctx context.Context, db *sql.DB, sample *monitoring.MySQLSample, check monitoring.CheckConfig) error {
 	limit := 20
 	if check.MySQL != nil && check.MySQL.StatementLimit > 0 {
 		limit = check.MySQL.StatementLimit
@@ -324,9 +326,9 @@ func (s *LiveMySQLSampler) collectTopQueries(ctx context.Context, db *sql.DB, sa
 	}
 	defer rows.Close()
 
-	var stats []MySQLDigestStat
+	var stats []monitoring.MySQLDigestStat
 	for rows.Next() {
-		var d MySQLDigestStat
+		var d monitoring.MySQLDigestStat
 		if err := rows.Scan(&d.DigestText, &d.CountStar, &d.SumTimerWait, &d.AvgTimerWait, &d.SumRowsSent, &d.SumRowsExam, &d.SumErrors, &d.SumWarnings, &d.FirstSeen, &d.LastSeen); err != nil {
 			continue
 		}

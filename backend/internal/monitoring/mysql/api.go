@@ -1,30 +1,32 @@
-package monitoring
+package mysql
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
+
+	"medics-health-check/backend/internal/monitoring"
 )
 
 // MySQLAPIHandler holds dependencies for MySQL-related API endpoints.
 type MySQLAPIHandler struct {
-	mysqlRepo    MySQLMetricsRepository
-	snapshotRepo IncidentSnapshotRepository
-	outbox       NotificationOutboxRepository
-	aiQueue      *FileAIQueue
-	auditLogger  *AuditLogger
-	cfg          *Config
+	mysqlRepo    monitoring.MySQLMetricsRepository
+	snapshotRepo monitoring.IncidentSnapshotRepository
+	outbox       monitoring.NotificationOutboxRepository
+	aiQueue      monitoring.AIQueueRepository
+	auditLogger  *monitoring.AuditLogger
+	cfg          *monitoring.Config
 }
 
 // NewMySQLAPIHandler creates a new MySQL API handler.
 func NewMySQLAPIHandler(
-	mysqlRepo MySQLMetricsRepository,
-	snapshotRepo IncidentSnapshotRepository,
-	outbox NotificationOutboxRepository,
-	aiQueue *FileAIQueue,
-	auditLogger *AuditLogger,
-	cfg *Config,
+	mysqlRepo monitoring.MySQLMetricsRepository,
+	snapshotRepo monitoring.IncidentSnapshotRepository,
+	outbox monitoring.NotificationOutboxRepository,
+	aiQueue monitoring.AIQueueRepository,
+	auditLogger *monitoring.AuditLogger,
+	cfg *monitoring.Config,
 ) *MySQLAPIHandler {
 	return &MySQLAPIHandler{
 		mysqlRepo:    mysqlRepo,
@@ -71,18 +73,18 @@ func (h *MySQLAPIHandler) handleMySQLSamples(w http.ResponseWriter, r *http.Requ
 		checkID = h.firstMySQLCheckID()
 	}
 	if checkID == "" {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("checkId is required"))
+		monitoring.WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("checkId is required"))
 		return
 	}
 
-	limit := queryInt(r, "limit", 20)
+	limit := monitoring.QueryInt(r, "limit", 20)
 	samples, err := h.mysqlRepo.RecentSamples(checkID, limit)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err)
+		monitoring.WriteAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(samples))
+	monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(samples))
 }
 
 // GET /api/v1/mysql/deltas?checkId=...&limit=...
@@ -97,18 +99,18 @@ func (h *MySQLAPIHandler) handleMySQLDeltas(w http.ResponseWriter, r *http.Reque
 		checkID = h.firstMySQLCheckID()
 	}
 	if checkID == "" {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("checkId is required"))
+		monitoring.WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("checkId is required"))
 		return
 	}
 
-	limit := queryInt(r, "limit", 20)
+	limit := monitoring.QueryInt(r, "limit", 20)
 	deltas, err := h.mysqlRepo.RecentDeltas(checkID, limit)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err)
+		monitoring.WriteAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(deltas))
+	monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(deltas))
 }
 
 // GET /api/v1/incidents/{id}/snapshots
@@ -126,17 +128,17 @@ func (h *MySQLAPIHandler) handleIncidentSnapshots(w http.ResponseWriter, r *http
 
 	incidentID := parts[0]
 	if incidentID == "" {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("missing incident id"))
+		monitoring.WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("missing incident id"))
 		return
 	}
 
 	snaps, err := h.snapshotRepo.GetSnapshots(incidentID)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err)
+		monitoring.WriteAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(snaps))
+	monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(snaps))
 }
 
 // GET /api/v1/notifications?status=pending&limit=...
@@ -146,14 +148,14 @@ func (h *MySQLAPIHandler) handleNotifications(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	limit := queryInt(r, "limit", 100)
+	limit := monitoring.QueryInt(r, "limit", 100)
 	events, err := h.outbox.ListPending(limit)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err)
+		monitoring.WriteAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(events))
+	monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(events))
 }
 
 // POST /api/v1/notifications/{id}/sent
@@ -164,15 +166,15 @@ func (h *MySQLAPIHandler) handleNotificationByID(w http.ResponseWriter, r *http.
 		return
 	}
 
-	if !isRequestAuthorized(h.cfg.Auth, r) {
-		requestAuth(w)
+	if !monitoring.IsRequestAuthorized(h.cfg.Auth, r) {
+		monitoring.RequestAuth(w)
 		return
 	}
 
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/notifications/")
 	parts := strings.Split(path, "/")
 	if len(parts) < 2 {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("expected /api/v1/notifications/{id}/{action}"))
+		monitoring.WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("expected /api/v1/notifications/{id}/{action}"))
 		return
 	}
 
@@ -182,37 +184,37 @@ func (h *MySQLAPIHandler) handleNotificationByID(w http.ResponseWriter, r *http.
 	switch action {
 	case "sent":
 		if err := h.outbox.MarkSent(notifID); err != nil {
-			writeAPIError(w, http.StatusInternalServerError, err)
+			monitoring.WriteAPIError(w, http.StatusInternalServerError, err)
 			return
 		}
 		if h.auditLogger != nil {
-			actor := ExtractActorFromRequest(r, h.cfg)
+			actor := monitoring.ExtractActorFromRequest(r, h.cfg)
 			_ = h.auditLogger.Log("notification.sent", actor, "notification", notifID, nil)
 		}
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]string{"status": "sent"}))
+		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(map[string]string{"status": "sent"}))
 
 	case "failed":
 		var payload struct {
 			Reason string `json:"reason"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			monitoring.WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 		if err := h.outbox.MarkFailed(notifID, payload.Reason); err != nil {
-			writeAPIError(w, http.StatusInternalServerError, err)
+			monitoring.WriteAPIError(w, http.StatusInternalServerError, err)
 			return
 		}
 		if h.auditLogger != nil {
-			actor := ExtractActorFromRequest(r, h.cfg)
+			actor := monitoring.ExtractActorFromRequest(r, h.cfg)
 			_ = h.auditLogger.Log("notification.failed", actor, "notification", notifID, map[string]interface{}{
 				"reason": payload.Reason,
 			})
 		}
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]string{"status": "failed"}))
+		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(map[string]string{"status": "failed"}))
 
 	default:
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("unknown action: %s", action))
+		monitoring.WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("unknown action: %s", action))
 	}
 }
 
@@ -223,14 +225,14 @@ func (h *MySQLAPIHandler) handleAIQueue(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	limit := queryInt(r, "limit", 100)
+	limit := monitoring.QueryInt(r, "limit", 100)
 	items, err := h.aiQueue.ListPendingItems(limit)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err)
+		monitoring.WriteAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(items))
+	monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(items))
 }
 
 // POST /api/v1/ai/queue/{incidentId}/done
@@ -241,15 +243,15 @@ func (h *MySQLAPIHandler) handleAIQueueByID(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if !isRequestAuthorized(h.cfg.Auth, r) {
-		requestAuth(w)
+	if !monitoring.IsRequestAuthorized(h.cfg.Auth, r) {
+		monitoring.RequestAuth(w)
 		return
 	}
 
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/ai/queue/")
 	parts := strings.Split(path, "/")
 	if len(parts) < 2 {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("expected /api/v1/ai/queue/{incidentId}/{action}"))
+		monitoring.WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("expected /api/v1/ai/queue/{incidentId}/{action}"))
 		return
 	}
 
@@ -258,42 +260,42 @@ func (h *MySQLAPIHandler) handleAIQueueByID(w http.ResponseWriter, r *http.Reque
 
 	switch action {
 	case "done":
-		var result AIAnalysisResult
+		var result monitoring.AIAnalysisResult
 		if err := json.NewDecoder(r.Body).Decode(&result); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			monitoring.WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 		if err := h.aiQueue.Complete(incidentID, result); err != nil {
-			writeAPIError(w, http.StatusInternalServerError, err)
+			monitoring.WriteAPIError(w, http.StatusInternalServerError, err)
 			return
 		}
 		if h.auditLogger != nil {
-			actor := ExtractActorFromRequest(r, h.cfg)
+			actor := monitoring.ExtractActorFromRequest(r, h.cfg)
 			_ = h.auditLogger.Log("ai.analysis.completed", actor, "incident", incidentID, nil)
 		}
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]string{"status": "completed"}))
+		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(map[string]string{"status": "completed"}))
 
 	case "failed":
 		var payload struct {
 			Reason string `json:"reason"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			monitoring.WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 		if err := h.aiQueue.Fail(incidentID, payload.Reason); err != nil {
-			writeAPIError(w, http.StatusInternalServerError, err)
+			monitoring.WriteAPIError(w, http.StatusInternalServerError, err)
 			return
 		}
 		if h.auditLogger != nil {
-			actor := ExtractActorFromRequest(r, h.cfg)
+			actor := monitoring.ExtractActorFromRequest(r, h.cfg)
 			_ = h.auditLogger.Log("ai.analysis.failed", actor, "incident", incidentID, map[string]interface{}{
 				"reason": payload.Reason,
 			})
 		}
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]string{"status": "failed"}))
+		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(map[string]string{"status": "failed"}))
 
 	default:
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("unknown action: %s", action))
+		monitoring.WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("unknown action: %s", action))
 	}
 }

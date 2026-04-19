@@ -9,24 +9,29 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 )
 
+// RouteRegistrar allows subpackages to register their HTTP routes.
+type RouteRegistrar interface {
+	RegisterRoutes(mux *http.ServeMux)
+}
+
 type Service struct {
-	cfg                    *Config
-	store                  Store
-	runner                 *Runner
-	scheduler              *CheckScheduler
-	incidentManager        *IncidentManager
-	alertEngine            *AlertRuleEngine
-	metrics                *MetricsCollector
-	logger                 *log.Logger
-	auditLogger            *AuditLogger
-	mysqlAPIHandler        *MySQLAPIHandler
-	aiAPIHandler           *AIAPIHandler
-	notificationAPIHandler *NotificationAPIHandler
+	cfg             *Config
+	store           Store
+	runner          *Runner
+	scheduler       *CheckScheduler
+	incidentManager *IncidentManager
+	alertEngine     *AlertRuleEngine
+	metrics         *MetricsCollector
+	logger          *log.Logger
+	auditLogger     *AuditLogger
+	mysqlRoutes     RouteRegistrar
+	aiRoutes        RouteRegistrar
+	notifyRoutes    RouteRegistrar
+	snapshotRepo    IncidentSnapshotRepository
 }
 
 func NewService(cfg *Config, store Store, logger *log.Logger) *Service {
@@ -111,19 +116,24 @@ func (s *Service) SetAlertEngine(ae *AlertRuleEngine) {
 	s.alertEngine = ae
 }
 
-// SetMySQLAPIHandler sets the MySQL API handler for the service
-func (s *Service) SetMySQLAPIHandler(h *MySQLAPIHandler) {
-	s.mysqlAPIHandler = h
+// SetMySQLRoutes sets the MySQL route registrar for the service
+func (s *Service) SetMySQLRoutes(r RouteRegistrar) {
+	s.mysqlRoutes = r
 }
 
-// SetAIAPIHandler sets the AI API handler for the service
-func (s *Service) SetAIAPIHandler(h *AIAPIHandler) {
-	s.aiAPIHandler = h
+// SetAIRoutes sets the AI route registrar for the service
+func (s *Service) SetAIRoutes(r RouteRegistrar) {
+	s.aiRoutes = r
 }
 
-// SetNotificationAPIHandler sets the notification channel API handler for the service
-func (s *Service) SetNotificationAPIHandler(h *NotificationAPIHandler) {
-	s.notificationAPIHandler = h
+// SetNotifyRoutes sets the notification route registrar for the service
+func (s *Service) SetNotifyRoutes(r RouteRegistrar) {
+	s.notifyRoutes = r
+}
+
+// SetSnapshotRepo sets the incident snapshot repository for the service.
+func (s *Service) SetSnapshotRepo(repo IncidentSnapshotRepository) {
+	s.snapshotRepo = repo
 }
 
 // Runner returns the service's runner for external configuration.
@@ -176,19 +186,18 @@ func (s *Service) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/export/results", handleExportResults(s.store, s.cfg.RetentionDays))
 
 	// Register MySQL/generic API routes if handler is configured
-	if s.mysqlAPIHandler != nil {
-		s.mysqlAPIHandler.RegisterRoutes(mux)
-		s.mysqlAPIHandler.RegisterAnalyticsRoutes(mux)
+	if s.mysqlRoutes != nil {
+		s.mysqlRoutes.RegisterRoutes(mux)
 	}
 
 	// Register AI API routes if handler is configured
-	if s.aiAPIHandler != nil {
-		s.aiAPIHandler.RegisterRoutes(mux)
+	if s.aiRoutes != nil {
+		s.aiRoutes.RegisterRoutes(mux)
 	}
 
 	// Register notification channel API routes if handler is configured
-	if s.notificationAPIHandler != nil {
-		s.notificationAPIHandler.RegisterRoutes(mux)
+	if s.notifyRoutes != nil {
+		s.notifyRoutes.RegisterRoutes(mux)
 	}
 
 	// Add Prometheus metrics endpoint
@@ -243,12 +252,12 @@ func (s *Service) Run(ctx context.Context) error {
 }
 
 func (s *Service) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]string{"status": "ok"}))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]string{"status": "ok"}))
 }
 
 func (s *Service) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	state := s.store.Snapshot()
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]interface{}{
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]interface{}{
 		"status":    "ready",
 		"checks":    len(state.Checks),
 		"lastRunAt": state.LastRunAt,
@@ -260,15 +269,15 @@ func (s *Service) handleChecks(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		state := s.store.Snapshot()
 		safe := sanitizeChecksForList(state.Checks)
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(safe))
+		WriteAPIResponse(w, http.StatusOK, NewAPIResponse(safe))
 	case http.MethodPost:
-		if !isRequestAuthorized(s.cfg.Auth, r) {
-			requestAuth(w)
+		if !IsRequestAuthorized(s.cfg.Auth, r) {
+			RequestAuth(w)
 			return
 		}
 		var check CheckConfig
 		if err := json.NewDecoder(r.Body).Decode(&check); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 		check.applyDefaults()
@@ -276,11 +285,11 @@ func (s *Service) handleChecks(w http.ResponseWriter, r *http.Request) {
 			check.ID = buildCheckID(&check)
 		}
 		if err := check.validate(s.cfg); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 		if err := s.store.UpsertCheck(check); err != nil {
-			writeAPIError(w, http.StatusInternalServerError, err)
+			WriteAPIError(w, http.StatusInternalServerError, err)
 			return
 		}
 		s.scheduler.UpsertSchedule(check)
@@ -294,7 +303,7 @@ func (s *Service) handleChecks(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
-		writeAPIResponse(w, http.StatusCreated, NewAPIResponse(check))
+		WriteAPIResponse(w, http.StatusCreated, NewAPIResponse(check))
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
@@ -303,7 +312,7 @@ func (s *Service) handleChecks(w http.ResponseWriter, r *http.Request) {
 func (s *Service) handleCheckByID(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/checks/")
 	if id == "" {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("missing check id"))
+		WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("missing check id"))
 		return
 	}
 
@@ -312,8 +321,8 @@ func (s *Service) handleCheckByID(w http.ResponseWriter, r *http.Request) {
 		s.handleGetCheck(w, r, id)
 		return
 	case http.MethodPut, http.MethodPatch:
-		if !isRequestAuthorized(s.cfg.Auth, r) {
-			requestAuth(w)
+		if !IsRequestAuthorized(s.cfg.Auth, r) {
+			RequestAuth(w)
 			return
 		}
 		// Verify the check exists before updating
@@ -326,22 +335,22 @@ func (s *Service) handleCheckByID(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if !exists {
-			writeAPIError(w, http.StatusNotFound, fmt.Errorf("check not found"))
+			WriteAPIError(w, http.StatusNotFound, fmt.Errorf("check not found"))
 			return
 		}
 		var check CheckConfig
 		if err := json.NewDecoder(r.Body).Decode(&check); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 		check.ID = id
 		check.applyDefaults()
 		if err := check.validate(s.cfg); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 		if err := s.store.UpsertCheck(check); err != nil {
-			writeAPIError(w, http.StatusInternalServerError, err)
+			WriteAPIError(w, http.StatusInternalServerError, err)
 			return
 		}
 		s.scheduler.UpsertSchedule(check)
@@ -355,10 +364,10 @@ func (s *Service) handleCheckByID(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(check))
+		WriteAPIResponse(w, http.StatusOK, NewAPIResponse(check))
 	case http.MethodDelete:
-		if !isRequestAuthorized(s.cfg.Auth, r) {
-			requestAuth(w)
+		if !IsRequestAuthorized(s.cfg.Auth, r) {
+			RequestAuth(w)
 			return
 		}
 		// Verify the check exists before deleting
@@ -371,11 +380,11 @@ func (s *Service) handleCheckByID(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if !found {
-			writeAPIError(w, http.StatusNotFound, fmt.Errorf("check not found"))
+			WriteAPIError(w, http.StatusNotFound, fmt.Errorf("check not found"))
 			return
 		}
 		if err := s.store.DeleteCheck(id); err != nil {
-			writeAPIError(w, http.StatusInternalServerError, err)
+			WriteAPIError(w, http.StatusInternalServerError, err)
 			return
 		}
 		s.scheduler.RemoveSchedule(id)
@@ -397,8 +406,8 @@ func (s *Service) handleRun(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	if !isRequestAuthorized(s.cfg.Auth, r) {
-		requestAuth(w)
+	if !IsRequestAuthorized(s.cfg.Auth, r) {
+		RequestAuth(w)
 		return
 	}
 
@@ -424,14 +433,14 @@ func (s *Service) handleRun(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if check == nil {
-			writeAPIError(w, http.StatusNotFound, fmt.Errorf("check not found: %s", runSpec.CheckID))
+			WriteAPIError(w, http.StatusNotFound, fmt.Errorf("check not found: %s", runSpec.CheckID))
 			return
 		}
 
 		// Execute and persist single check.
 		result, err := s.runner.RunCheck(r.Context(), *check)
 		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, err)
+			WriteAPIError(w, http.StatusInternalServerError, err)
 			return
 		}
 
@@ -459,14 +468,14 @@ func (s *Service) handleRun(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		writeAPIResponse(w, http.StatusAccepted, NewAPIResponse(result))
+		WriteAPIResponse(w, http.StatusAccepted, NewAPIResponse(result))
 		return
 	}
 
 	// Full run of all checks
 	summary, err := s.runner.RunOnce(r.Context())
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err)
+		WriteAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -495,7 +504,7 @@ func (s *Service) handleRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeAPIResponse(w, http.StatusAccepted, NewAPIResponse(summary))
+	WriteAPIResponse(w, http.StatusAccepted, NewAPIResponse(summary))
 }
 
 func (s *Service) handleSummary(w http.ResponseWriter, r *http.Request) {
@@ -505,7 +514,7 @@ func (s *Service) handleSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	state := s.store.Snapshot()
 	summary := buildSummary(state.Checks, state.Results, &state.LastRunAt)
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(summary))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(summary))
 }
 
 func (s *Service) handleResults(w http.ResponseWriter, r *http.Request) {
@@ -516,9 +525,9 @@ func (s *Service) handleResults(w http.ResponseWriter, r *http.Request) {
 
 	state := s.store.Snapshot()
 	checkID := strings.TrimSpace(r.URL.Query().Get("checkId"))
-	days := queryInt(r, "days", s.cfg.RetentionDays)
+	days := QueryInt(r, "days", s.cfg.RetentionDays)
 	results := filterResults(state.Results, checkID, days)
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(results))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(results))
 }
 
 func (s *Service) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -527,7 +536,7 @@ func (s *Service) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	snapshot := s.store.DashboardSnapshot()
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(snapshot))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(snapshot))
 }
 
 func (s *Service) handleDashboardChecks(w http.ResponseWriter, r *http.Request) {
@@ -537,7 +546,7 @@ func (s *Service) handleDashboardChecks(w http.ResponseWriter, r *http.Request) 
 	}
 	snapshot := s.store.DashboardSnapshot()
 	items := toCheckListItems(snapshot.State.Checks)
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(items))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(items))
 }
 
 func (s *Service) handleDashboardSummary(w http.ResponseWriter, r *http.Request) {
@@ -546,7 +555,7 @@ func (s *Service) handleDashboardSummary(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	snapshot := s.store.DashboardSnapshot()
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(snapshot.Summary))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(snapshot.Summary))
 }
 
 func (s *Service) handleDashboardResults(w http.ResponseWriter, r *http.Request) {
@@ -556,9 +565,9 @@ func (s *Service) handleDashboardResults(w http.ResponseWriter, r *http.Request)
 	}
 	snapshot := s.store.DashboardSnapshot()
 	checkID := strings.TrimSpace(r.URL.Query().Get("checkId"))
-	days := queryInt(r, "days", s.cfg.RetentionDays)
+	days := QueryInt(r, "days", s.cfg.RetentionDays)
 	results := filterResults(snapshot.State.Results, checkID, days)
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(results))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(results))
 }
 
 func filterResults(results []CheckResult, checkID string, days int) []CheckResult {
@@ -662,18 +671,6 @@ func addGroupCount(groups map[string]StatusCount, key, status string) {
 	groups[key] = current
 }
 
-func queryInt(r *http.Request, key string, fallback int) int {
-	raw := strings.TrimSpace(r.URL.Query().Get(key))
-	if raw == "" {
-		return fallback
-	}
-	value, err := strconv.Atoi(raw)
-	if err != nil || value <= 0 {
-		return fallback
-	}
-	return value
-}
-
 func loggingMiddleware(logger *log.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -730,7 +727,7 @@ func metricsMiddleware(mc *MetricsCollector, next http.Handler) http.Handler {
 
 func (s *Service) handleIncidents(w http.ResponseWriter, r *http.Request) {
 	if s.incidentManager == nil {
-		writeAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("incident manager not configured"))
+		WriteAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("incident manager not configured"))
 		return
 	}
 
@@ -743,16 +740,16 @@ func (s *Service) handleIncidents(w http.ResponseWriter, r *http.Request) {
 	repo := s.incidentManager.repo
 	incidents, err := repo.ListIncidents()
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err)
+		WriteAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(incidents))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(incidents))
 }
 
 func (s *Service) handleIncidentByID(w http.ResponseWriter, r *http.Request) {
 	if s.incidentManager == nil {
-		writeAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("incident manager not configured"))
+		WriteAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("incident manager not configured"))
 		return
 	}
 
@@ -761,7 +758,7 @@ func (s *Service) handleIncidentByID(w http.ResponseWriter, r *http.Request) {
 	incidentID := parts[0]
 
 	if incidentID == "" {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("missing incident id"))
+		WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("missing incident id"))
 		return
 	}
 
@@ -773,8 +770,8 @@ func (s *Service) handleIncidentByID(w http.ResponseWriter, r *http.Request) {
 		}
 		s.getIncident(w, incidentID)
 	case http.MethodPost:
-		if !isRequestAuthorized(s.cfg.Auth, r) {
-			requestAuth(w)
+		if !IsRequestAuthorized(s.cfg.Auth, r) {
+			RequestAuth(w)
 			return
 		}
 		if len(parts) >= 2 {
@@ -785,10 +782,10 @@ func (s *Service) handleIncidentByID(w http.ResponseWriter, r *http.Request) {
 			case "resolve":
 				s.resolveIncident(w, r, incidentID)
 			default:
-				writeAPIError(w, http.StatusBadRequest, fmt.Errorf("unknown action: %s", action))
+				WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("unknown action: %s", action))
 			}
 		} else {
-			writeAPIError(w, http.StatusBadRequest, fmt.Errorf("missing action"))
+			WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("missing action"))
 		}
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -799,40 +796,40 @@ func (s *Service) getIncident(w http.ResponseWriter, incidentID string) {
 	repo := s.incidentManager.repo
 	incident, err := repo.GetIncident(incidentID)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err)
+		WriteAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	if incident.ID == "" {
-		writeAPIError(w, http.StatusNotFound, fmt.Errorf("incident not found"))
+		WriteAPIError(w, http.StatusNotFound, fmt.Errorf("incident not found"))
 		return
 	}
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(incident))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(incident))
 }
 
 func (s *Service) getIncidentSnapshots(w http.ResponseWriter, incidentID string) {
-	if s.mysqlAPIHandler != nil && s.mysqlAPIHandler.snapshotRepo != nil {
-		snaps, err := s.mysqlAPIHandler.snapshotRepo.GetSnapshots(incidentID)
+	if s.snapshotRepo != nil {
+		snaps, err := s.snapshotRepo.GetSnapshots(incidentID)
 		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, err)
+			WriteAPIError(w, http.StatusInternalServerError, err)
 			return
 		}
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(snaps))
+		WriteAPIResponse(w, http.StatusOK, NewAPIResponse(snaps))
 		return
 	}
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse([]struct{}{}))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse([]struct{}{}))
 }
 
 func (s *Service) acknowledgeIncident(w http.ResponseWriter, r *http.Request, incidentID string) {
 	// Check if incident exists first
 	incident, err := s.incidentManager.repo.GetIncident(incidentID)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err)
+		WriteAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 	if incident.ID == "" {
-		writeAPIError(w, http.StatusNotFound, fmt.Errorf("incident not found"))
+		WriteAPIError(w, http.StatusNotFound, fmt.Errorf("incident not found"))
 		return
 	}
 
@@ -850,7 +847,7 @@ func (s *Service) acknowledgeIncident(w http.ResponseWriter, r *http.Request, in
 	}
 
 	if err := s.incidentManager.AcknowledgeIncident(incidentID, payload.AcknowledgedBy); err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err)
+		WriteAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -870,11 +867,11 @@ func (s *Service) resolveIncident(w http.ResponseWriter, r *http.Request, incide
 	// Check if incident exists first
 	incident, err := s.incidentManager.repo.GetIncident(incidentID)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err)
+		WriteAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 	if incident.ID == "" {
-		writeAPIError(w, http.StatusNotFound, fmt.Errorf("incident not found"))
+		WriteAPIError(w, http.StatusNotFound, fmt.Errorf("incident not found"))
 		return
 	}
 
@@ -892,7 +889,7 @@ func (s *Service) resolveIncident(w http.ResponseWriter, r *http.Request, incide
 	}
 
 	if err := s.incidentManager.ResolveIncident(incidentID, payload.ResolvedBy); err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err)
+		WriteAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -915,7 +912,7 @@ func (s *Service) handleAudit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.auditLogger == nil {
-		writeAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("audit logger not configured"))
+		WriteAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("audit logger not configured"))
 		return
 	}
 
@@ -925,8 +922,8 @@ func (s *Service) handleAudit(w http.ResponseWriter, r *http.Request) {
 		Actor:    strings.TrimSpace(r.URL.Query().Get("actor")),
 		Target:   strings.TrimSpace(r.URL.Query().Get("target")),
 		TargetID: strings.TrimSpace(r.URL.Query().Get("targetId")),
-		Limit:    queryInt(r, "limit", 100),
-		Offset:   queryInt(r, "offset", 0),
+		Limit:    QueryInt(r, "limit", 100),
+		Offset:   QueryInt(r, "offset", 0),
 	}
 
 	// Parse time range if provided
@@ -943,9 +940,9 @@ func (s *Service) handleAudit(w http.ResponseWriter, r *http.Request) {
 
 	events, err := s.auditLogger.GetAuditEvents(filter)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err)
+		WriteAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(events))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(events))
 }

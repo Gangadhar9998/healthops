@@ -1,4 +1,4 @@
-package monitoring
+package ai
 
 import (
 	"context"
@@ -7,23 +7,25 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"medics-health-check/backend/internal/monitoring"
 )
 
 // AIAPIHandler handles all AI-related API endpoints.
 type AIAPIHandler struct {
 	aiService   *AIService
 	configStore *AIConfigStore
-	auditLogger *AuditLogger
-	cfg         *Config
-	mysqlRepo   MySQLMetricsRepository
+	auditLogger *monitoring.AuditLogger
+	cfg         *monitoring.Config
+	mysqlRepo   monitoring.MySQLMetricsRepository
 }
 
 // NewAIAPIHandler creates a new AI API handler.
 func NewAIAPIHandler(
 	aiService *AIService,
 	configStore *AIConfigStore,
-	auditLogger *AuditLogger,
-	cfg *Config,
+	auditLogger *monitoring.AuditLogger,
+	cfg *monitoring.Config,
 ) *AIAPIHandler {
 	return &AIAPIHandler{
 		aiService:   aiService,
@@ -34,7 +36,7 @@ func NewAIAPIHandler(
 }
 
 // SetMySQLRepo sets the MySQL repository for AI MySQL analysis.
-func (h *AIAPIHandler) SetMySQLRepo(repo MySQLMetricsRepository) {
+func (h *AIAPIHandler) SetMySQLRepo(repo monitoring.MySQLMetricsRepository) {
 	h.mysqlRepo = repo
 }
 
@@ -60,11 +62,11 @@ func (h *AIAPIHandler) handleAIConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		cfg := h.configStore.Get()
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(cfg.toSafeView()))
+		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(cfg.toSafeView()))
 
 	case http.MethodPut:
-		if !isRequestAuthorized(h.cfg.Auth, r) {
-			requestAuth(w)
+		if !monitoring.IsRequestAuthorized(h.cfg.Auth, r) {
+			monitoring.RequestAuth(w)
 			return
 		}
 
@@ -79,7 +81,7 @@ func (h *AIAPIHandler) handleAIConfig(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&update); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			monitoring.WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 
@@ -108,7 +110,7 @@ func (h *AIAPIHandler) handleAIConfig(w http.ResponseWriter, r *http.Request) {
 			return cfg.validate()
 		})
 		if err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			monitoring.WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 
@@ -118,12 +120,12 @@ func (h *AIAPIHandler) handleAIConfig(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if h.auditLogger != nil {
-			actor := ExtractActorFromRequest(r, h.cfg)
+			actor := monitoring.ExtractActorFromRequest(r, h.cfg)
 			_ = h.auditLogger.Log("ai_config.updated", actor, "ai_config", "", nil)
 		}
 
 		cfg := h.configStore.Get()
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(cfg.toSafeView()))
+		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(cfg.toSafeView()))
 
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -139,17 +141,17 @@ func (h *AIAPIHandler) handleAIProviders(w http.ResponseWriter, r *http.Request)
 	case http.MethodGet:
 		cfg := h.configStore.Get()
 		safe := cfg.toSafeView()
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(safe.Providers))
+		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(safe.Providers))
 
 	case http.MethodPost:
-		if !isRequestAuthorized(h.cfg.Auth, r) {
-			requestAuth(w)
+		if !monitoring.IsRequestAuthorized(h.cfg.Auth, r) {
+			monitoring.RequestAuth(w)
 			return
 		}
 
 		var provider AIProviderConfig
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&provider); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			monitoring.WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 
@@ -158,7 +160,7 @@ func (h *AIAPIHandler) handleAIProviders(w http.ResponseWriter, r *http.Request)
 		provider.UpdatedAt = now
 
 		if err := provider.validate(); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			monitoring.WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 
@@ -181,7 +183,7 @@ func (h *AIAPIHandler) handleAIProviders(w http.ResponseWriter, r *http.Request)
 			return nil
 		})
 		if err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			monitoring.WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 
@@ -190,7 +192,7 @@ func (h *AIAPIHandler) handleAIProviders(w http.ResponseWriter, r *http.Request)
 		}
 
 		if h.auditLogger != nil {
-			actor := ExtractActorFromRequest(r, h.cfg)
+			actor := monitoring.ExtractActorFromRequest(r, h.cfg)
 			_ = h.auditLogger.Log("ai_provider.created", actor, "ai_provider", provider.ID, map[string]interface{}{
 				"provider": string(provider.Provider),
 				"model":    provider.Model,
@@ -213,7 +215,7 @@ func (h *AIAPIHandler) handleAIProviders(w http.ResponseWriter, r *http.Request)
 			UpdatedAt:   provider.UpdatedAt,
 		}
 
-		writeAPIResponse(w, http.StatusCreated, NewAPIResponse(safeProvider))
+		monitoring.WriteAPIResponse(w, http.StatusCreated, monitoring.NewAPIResponse(safeProvider))
 
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -225,12 +227,12 @@ func (h *AIAPIHandler) handleAIProviders(w http.ResponseWriter, r *http.Request)
 func (h *AIAPIHandler) handleAIProviderByID(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/ai/providers/")
 	if id == "" {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("missing provider ID"))
+		monitoring.WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("missing provider ID"))
 		return
 	}
 
-	if !isRequestAuthorized(h.cfg.Auth, r) {
-		requestAuth(w)
+	if !monitoring.IsRequestAuthorized(h.cfg.Auth, r) {
+		monitoring.RequestAuth(w)
 		return
 	}
 
@@ -238,7 +240,7 @@ func (h *AIAPIHandler) handleAIProviderByID(w http.ResponseWriter, r *http.Reque
 	case http.MethodPut:
 		var provider AIProviderConfig
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&provider); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			monitoring.WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 		provider.ID = id
@@ -281,7 +283,7 @@ func (h *AIAPIHandler) handleAIProviderByID(w http.ResponseWriter, r *http.Reque
 			return nil
 		})
 		if err != nil {
-			writeAPIError(w, http.StatusNotFound, err)
+			monitoring.WriteAPIError(w, http.StatusNotFound, err)
 			return
 		}
 
@@ -290,7 +292,7 @@ func (h *AIAPIHandler) handleAIProviderByID(w http.ResponseWriter, r *http.Reque
 		}
 
 		if h.auditLogger != nil {
-			actor := ExtractActorFromRequest(r, h.cfg)
+			actor := monitoring.ExtractActorFromRequest(r, h.cfg)
 			_ = h.auditLogger.Log("ai_provider.updated", actor, "ai_provider", id, map[string]interface{}{
 				"model": provider.Model,
 			})
@@ -311,7 +313,7 @@ func (h *AIAPIHandler) handleAIProviderByID(w http.ResponseWriter, r *http.Reque
 			UpdatedAt:   provider.UpdatedAt,
 		}
 
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(safeProvider))
+		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(safeProvider))
 
 	case http.MethodDelete:
 		err := h.configStore.Update(func(cfg *AIServiceConfig) error {
@@ -324,7 +326,7 @@ func (h *AIAPIHandler) handleAIProviderByID(w http.ResponseWriter, r *http.Reque
 			return fmt.Errorf("provider %q not found", id)
 		})
 		if err != nil {
-			writeAPIError(w, http.StatusNotFound, err)
+			monitoring.WriteAPIError(w, http.StatusNotFound, err)
 			return
 		}
 
@@ -333,11 +335,11 @@ func (h *AIAPIHandler) handleAIProviderByID(w http.ResponseWriter, r *http.Reque
 		}
 
 		if h.auditLogger != nil {
-			actor := ExtractActorFromRequest(r, h.cfg)
+			actor := monitoring.ExtractActorFromRequest(r, h.cfg)
 			_ = h.auditLogger.Log("ai_provider.deleted", actor, "ai_provider", id, nil)
 		}
 
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]string{"deleted": id}))
+		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(map[string]string{"deleted": id}))
 
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -352,22 +354,22 @@ func (h *AIAPIHandler) handleAIPrompts(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		cfg := h.configStore.Get()
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(cfg.Prompts))
+		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(cfg.Prompts))
 
 	case http.MethodPost:
-		if !isRequestAuthorized(h.cfg.Auth, r) {
-			requestAuth(w)
+		if !monitoring.IsRequestAuthorized(h.cfg.Auth, r) {
+			monitoring.RequestAuth(w)
 			return
 		}
 
 		var prompt AIPromptTemplate
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&prompt); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			monitoring.WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 
 		if prompt.ID == "" || prompt.Name == "" || prompt.UserMsg == "" {
-			writeAPIError(w, http.StatusBadRequest, fmt.Errorf("id, name, and userMsg are required"))
+			monitoring.WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("id, name, and userMsg are required"))
 			return
 		}
 
@@ -388,16 +390,16 @@ func (h *AIAPIHandler) handleAIPrompts(w http.ResponseWriter, r *http.Request) {
 			return nil
 		})
 		if err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			monitoring.WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 
 		if h.auditLogger != nil {
-			actor := ExtractActorFromRequest(r, h.cfg)
+			actor := monitoring.ExtractActorFromRequest(r, h.cfg)
 			_ = h.auditLogger.Log("ai_prompt.created", actor, "ai_prompt", prompt.ID, nil)
 		}
 
-		writeAPIResponse(w, http.StatusCreated, NewAPIResponse(prompt))
+		monitoring.WriteAPIResponse(w, http.StatusCreated, monitoring.NewAPIResponse(prompt))
 
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -409,12 +411,12 @@ func (h *AIAPIHandler) handleAIPrompts(w http.ResponseWriter, r *http.Request) {
 func (h *AIAPIHandler) handleAIPromptByID(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/ai/prompts/")
 	if id == "" {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("missing prompt ID"))
+		monitoring.WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("missing prompt ID"))
 		return
 	}
 
-	if !isRequestAuthorized(h.cfg.Auth, r) {
-		requestAuth(w)
+	if !monitoring.IsRequestAuthorized(h.cfg.Auth, r) {
+		monitoring.RequestAuth(w)
 		return
 	}
 
@@ -422,13 +424,13 @@ func (h *AIAPIHandler) handleAIPromptByID(w http.ResponseWriter, r *http.Request
 	case http.MethodPut:
 		var prompt AIPromptTemplate
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&prompt); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			monitoring.WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 		prompt.ID = id
 
 		if prompt.Name == "" || prompt.UserMsg == "" {
-			writeAPIError(w, http.StatusBadRequest, fmt.Errorf("name and userMsg are required"))
+			monitoring.WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("name and userMsg are required"))
 			return
 		}
 
@@ -454,16 +456,16 @@ func (h *AIAPIHandler) handleAIPromptByID(w http.ResponseWriter, r *http.Request
 			return nil
 		})
 		if err != nil {
-			writeAPIError(w, http.StatusNotFound, err)
+			monitoring.WriteAPIError(w, http.StatusNotFound, err)
 			return
 		}
 
 		if h.auditLogger != nil {
-			actor := ExtractActorFromRequest(r, h.cfg)
+			actor := monitoring.ExtractActorFromRequest(r, h.cfg)
 			_ = h.auditLogger.Log("ai_prompt.updated", actor, "ai_prompt", id, nil)
 		}
 
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(prompt))
+		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(prompt))
 
 	case http.MethodDelete:
 		err := h.configStore.Update(func(cfg *AIServiceConfig) error {
@@ -476,16 +478,16 @@ func (h *AIAPIHandler) handleAIPromptByID(w http.ResponseWriter, r *http.Request
 			return fmt.Errorf("prompt %q not found", id)
 		})
 		if err != nil {
-			writeAPIError(w, http.StatusNotFound, err)
+			monitoring.WriteAPIError(w, http.StatusNotFound, err)
 			return
 		}
 
 		if h.auditLogger != nil {
-			actor := ExtractActorFromRequest(r, h.cfg)
+			actor := monitoring.ExtractActorFromRequest(r, h.cfg)
 			_ = h.auditLogger.Log("ai_prompt.deleted", actor, "ai_prompt", id, nil)
 		}
 
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]string{"deleted": id}))
+		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(map[string]string{"deleted": id}))
 
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -501,14 +503,14 @@ func (h *AIAPIHandler) handleAnalyzeIncident(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if !isRequestAuthorized(h.cfg.Auth, r) {
-		requestAuth(w)
+	if !monitoring.IsRequestAuthorized(h.cfg.Auth, r) {
+		monitoring.RequestAuth(w)
 		return
 	}
 
 	incidentID := strings.TrimPrefix(r.URL.Path, "/api/v1/ai/analyze/")
 	if incidentID == "" {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("missing incident ID"))
+		monitoring.WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("missing incident ID"))
 		return
 	}
 
@@ -520,24 +522,24 @@ func (h *AIAPIHandler) handleAnalyzeIncident(w http.ResponseWriter, r *http.Requ
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&opts)
 
 	if h.aiService == nil {
-		writeAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("AI service not configured"))
+		monitoring.WriteAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("AI service not configured"))
 		return
 	}
 
 	result, err := h.aiService.AnalyzeIncident(r.Context(), incidentID, opts.ProviderID)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err)
+		monitoring.WriteAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	if h.auditLogger != nil {
-		actor := ExtractActorFromRequest(r, h.cfg)
+		actor := monitoring.ExtractActorFromRequest(r, h.cfg)
 		_ = h.auditLogger.Log("ai.analysis.triggered", actor, "incident", incidentID, map[string]interface{}{
 			"providerId": opts.ProviderID,
 		})
 	}
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(result))
+	monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(result))
 }
 
 // --- Provider Health ---
@@ -550,12 +552,12 @@ func (h *AIAPIHandler) handleAIProviderHealth(w http.ResponseWriter, r *http.Req
 	}
 
 	if h.aiService == nil {
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse([]ProviderHealth{}))
+		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse([]ProviderHealth{}))
 		return
 	}
 
 	results := h.aiService.CheckProviderHealth(r.Context())
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(results))
+	monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(results))
 }
 
 // --- AI Analysis Results ---
@@ -569,15 +571,15 @@ func (h *AIAPIHandler) handleAIResultsList(w http.ResponseWriter, r *http.Reques
 	}
 
 	if h.aiService == nil || h.aiService.aiQueue == nil {
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse([]AIAnalysisResult{}))
+		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse([]monitoring.AIAnalysisResult{}))
 		return
 	}
 
 	results := h.aiService.aiQueue.AllResults(100)
 	if results == nil {
-		results = []AIAnalysisResult{}
+		results = []monitoring.AIAnalysisResult{}
 	}
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(results))
+	monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(results))
 }
 
 func (h *AIAPIHandler) handleAIResults(w http.ResponseWriter, r *http.Request) {
@@ -588,7 +590,7 @@ func (h *AIAPIHandler) handleAIResults(w http.ResponseWriter, r *http.Request) {
 
 	incidentID := strings.TrimPrefix(r.URL.Path, "/api/v1/ai/results/")
 	if incidentID == "" {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("missing incident ID"))
+		monitoring.WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("missing incident ID"))
 		return
 	}
 
@@ -597,12 +599,12 @@ func (h *AIAPIHandler) handleAIResults(w http.ResponseWriter, r *http.Request) {
 
 	// Get results from the AI queue's results store
 	if h.aiService == nil || h.aiService.aiQueue == nil {
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse([]AIAnalysisResult{}))
+		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse([]monitoring.AIAnalysisResult{}))
 		return
 	}
 
 	results := h.aiService.aiQueue.GetResults(incidentID)
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(results))
+	monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(results))
 }
 
 // --- MySQL AI Ask ---
@@ -619,19 +621,19 @@ func (h *AIAPIHandler) handleMySQLAIAsk(w http.ResponseWriter, r *http.Request) 
 	_ = rc.SetWriteDeadline(time.Now().Add(120 * time.Second))
 
 	if h.aiService == nil {
-		writeAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("AI service not configured"))
+		monitoring.WriteAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("AI service not configured"))
 		return
 	}
 
 	var req MySQLAskRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid request: %w", err))
+		monitoring.WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid request: %w", err))
 		return
 	}
 
 	// Gather current MySQL health data
 	if h.mysqlRepo == nil {
-		writeAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("MySQL monitoring not configured"))
+		monitoring.WriteAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("MySQL monitoring not configured"))
 		return
 	}
 
@@ -646,14 +648,14 @@ func (h *AIAPIHandler) handleMySQLAIAsk(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if checkID == "" {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("no MySQL check configured"))
+		monitoring.WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("no MySQL check configured"))
 		return
 	}
 
 	// Get latest sample for context
 	samples, err := h.mysqlRepo.RecentSamples(checkID, 1)
 	if err != nil || len(samples) == 0 {
-		writeAPIError(w, http.StatusInternalServerError, fmt.Errorf("no MySQL samples available"))
+		monitoring.WriteAPIError(w, http.StatusInternalServerError, fmt.Errorf("no MySQL samples available"))
 		return
 	}
 
@@ -672,7 +674,7 @@ func (h *AIAPIHandler) handleMySQLAIAsk(w http.ResponseWriter, r *http.Request) 
 	}
 	healthJSON, err := json.MarshalIndent(contextData, "", "  ")
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err)
+		monitoring.WriteAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -682,9 +684,9 @@ func (h *AIAPIHandler) handleMySQLAIAsk(w http.ResponseWriter, r *http.Request) 
 
 	result, err := h.aiService.AnalyzeMySQL(ctx, req.Question, req.ProviderID, string(healthJSON))
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err)
+		monitoring.WriteAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(result))
+	monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(result))
 }

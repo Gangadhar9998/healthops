@@ -420,20 +420,20 @@ func TestQueryInt(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/results?days=5", nil)
 
 	// Test valid query
-	val := queryInt(req, "days", 7)
+	val := QueryInt(req, "days", 7)
 	if val != 5 {
 		t.Errorf("expected 5, got %d", val)
 	}
 
 	// Test missing query (uses fallback)
-	val2 := queryInt(req, "retention", 14)
+	val2 := QueryInt(req, "retention", 14)
 	if val2 != 14 {
 		t.Errorf("expected fallback 14, got %d", val2)
 	}
 
 	// Test invalid query (uses fallback)
 	req3 := httptest.NewRequest(http.MethodGet, "/api/v1/results?days=invalid", nil)
-	val3 := queryInt(req3, "days", 7)
+	val3 := QueryInt(req3, "days", 7)
 	if val3 != 7 {
 		t.Errorf("expected fallback 7 for invalid, got %d", val3)
 	}

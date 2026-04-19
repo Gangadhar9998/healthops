@@ -1,4 +1,4 @@
-package monitoring
+package mysql
 
 import (
 	"encoding/csv"
@@ -9,50 +9,52 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"medics-health-check/backend/internal/monitoring"
 )
 
 // MySQLHealthSummary is a single-card summary of MySQL health.
 type MySQLHealthSummary struct {
-	CheckID               string            `json:"checkId"`
-	Timestamp             time.Time         `json:"timestamp"`
-	ConnectionUtilPct     float64           `json:"connectionUtilPct"`
-	Connections           int64             `json:"connections"`
-	MaxConnections        int64             `json:"maxConnections"`
-	ThreadsRunning        int64             `json:"threadsRunning"`
-	QueriesPerSec         float64           `json:"queriesPerSec"`
-	SlowQueries           float64           `json:"slowQueries"`
-	SlowQueriesPerSec     float64           `json:"slowQueriesPerSec"`
-	RowLockWaitsPerSec    float64           `json:"rowLockWaitsPerSec"`
-	TmpDiskTablesPct      float64           `json:"tmpDiskTablesPct"`
-	AbortedConnectsPerSec float64           `json:"abortedConnectsPerSec"`
-	UptimeSeconds         int64             `json:"uptimeSeconds"`
-	Uptime                int64             `json:"uptime"`
-	Status                string            `json:"status"` // "healthy", "warning", "critical"
-	LastSampleAt          time.Time         `json:"lastSampleAt"`
-	ProcessList           []MySQLProcess    `json:"processList,omitempty"`
-	UserStats             []MySQLUserStat   `json:"userStats,omitempty"`
-	HostStats             []MySQLHostStat   `json:"hostStats,omitempty"`
-	TopQueries            []MySQLDigestStat `json:"topQueries,omitempty"`
-	TotalSlowQueries      int64             `json:"totalSlowQueries"`
-	AbortedConnects       int64             `json:"abortedConnects"`
-	AbortedClients        int64             `json:"abortedClients"`
-	MaxUsedConnections    int64             `json:"maxUsedConnections"`
-	InnoDBRowLockWaits    int64             `json:"innodbRowLockWaits"`
-	InnoDBRowLockTime     int64             `json:"innodbRowLockTime"`
-	Questions             int64             `json:"questions"`
+	CheckID               string                       `json:"checkId"`
+	Timestamp             time.Time                    `json:"timestamp"`
+	ConnectionUtilPct     float64                      `json:"connectionUtilPct"`
+	Connections           int64                        `json:"connections"`
+	MaxConnections        int64                        `json:"maxConnections"`
+	ThreadsRunning        int64                        `json:"threadsRunning"`
+	QueriesPerSec         float64                      `json:"queriesPerSec"`
+	SlowQueries           float64                      `json:"slowQueries"`
+	SlowQueriesPerSec     float64                      `json:"slowQueriesPerSec"`
+	RowLockWaitsPerSec    float64                      `json:"rowLockWaitsPerSec"`
+	TmpDiskTablesPct      float64                      `json:"tmpDiskTablesPct"`
+	AbortedConnectsPerSec float64                      `json:"abortedConnectsPerSec"`
+	UptimeSeconds         int64                        `json:"uptimeSeconds"`
+	Uptime                int64                        `json:"uptime"`
+	Status                string                       `json:"status"` // "healthy", "warning", "critical"
+	LastSampleAt          time.Time                    `json:"lastSampleAt"`
+	ProcessList           []monitoring.MySQLProcess    `json:"processList,omitempty"`
+	UserStats             []monitoring.MySQLUserStat   `json:"userStats,omitempty"`
+	HostStats             []monitoring.MySQLHostStat   `json:"hostStats,omitempty"`
+	TopQueries            []monitoring.MySQLDigestStat `json:"topQueries,omitempty"`
+	TotalSlowQueries      int64                        `json:"totalSlowQueries"`
+	AbortedConnects       int64                        `json:"abortedConnects"`
+	AbortedClients        int64                        `json:"abortedClients"`
+	MaxUsedConnections    int64                        `json:"maxUsedConnections"`
+	InnoDBRowLockWaits    int64                        `json:"innodbRowLockWaits"`
+	InnoDBRowLockTime     int64                        `json:"innodbRowLockTime"`
+	Questions             int64                        `json:"questions"`
 	// Additional performance stats
-	SelectScan             int64   `json:"selectScan"`
-	SelectFullJoin         int64   `json:"selectFullJoin"`
-	SortMergePasses        int64   `json:"sortMergePasses"`
-	TableLocksWaited       int64   `json:"tableLocksWaited"`
-	TableLocksImmediate    int64   `json:"tableLocksImmediate"`
-	BufferPoolHitRate      float64 `json:"bufferPoolHitRate"`
-	OpenFiles              int64   `json:"openFiles"`
-	OpenFilesLimit         int64   `json:"openFilesLimit"`
-	OpenTables             int64   `json:"openTables"`
-	TableOpenCache         int64   `json:"tableOpenCache"`
-	OpenedTables           int64   `json:"openedTables"`
-	ConnectionsRefused     int64   `json:"connectionsRefused"`
+	SelectScan          int64   `json:"selectScan"`
+	SelectFullJoin      int64   `json:"selectFullJoin"`
+	SortMergePasses     int64   `json:"sortMergePasses"`
+	TableLocksWaited    int64   `json:"tableLocksWaited"`
+	TableLocksImmediate int64   `json:"tableLocksImmediate"`
+	BufferPoolHitRate   float64 `json:"bufferPoolHitRate"`
+	OpenFiles           int64   `json:"openFiles"`
+	OpenFilesLimit      int64   `json:"openFilesLimit"`
+	OpenTables          int64   `json:"openTables"`
+	TableOpenCache      int64   `json:"tableOpenCache"`
+	OpenedTables        int64   `json:"openedTables"`
+	ConnectionsRefused  int64   `json:"connectionsRefused"`
 }
 
 // MySQLTimeSeriesPoint for charting MySQL metrics over time.
@@ -93,25 +95,9 @@ const (
 	ExportJSON ExportFormat = "json"
 )
 
-// AllNotifications returns a copy of all notification events.
-func (o *FileNotificationOutbox) AllNotifications() []NotificationEvent {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-
-	out := make([]NotificationEvent, len(o.data))
-	copy(out, o.data)
-	return out
-}
-
-// AllItems returns a copy of all AI queue items.
-func (q *FileAIQueue) AllItems() []AIQueueItem {
-	q.mu.RLock()
-	defer q.mu.RUnlock()
-
-	out := make([]AIQueueItem, len(q.queue))
-	copy(out, q.queue)
-	return out
-}
+// NOTE: AllNotifications() and AllItems() are methods on monitoring.FileNotificationOutbox
+// and monitoring.FileAIQueue respectively. They cannot be defined here because Go does not
+// allow defining methods on types from another package. They remain in the monitoring package.
 
 // RegisterAnalyticsRoutes registers analytics and export routes on the given mux.
 func (h *MySQLAPIHandler) RegisterAnalyticsRoutes(mux *http.ServeMux) {
@@ -135,19 +121,19 @@ func (h *MySQLAPIHandler) handleMySQLHealthSummary(w http.ResponseWriter, r *htt
 		checkID = h.firstMySQLCheckID()
 	}
 	if checkID == "" {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("checkId is required"))
+		monitoring.WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("checkId is required"))
 		return
 	}
 
 	sample, err := h.mysqlRepo.LatestSample(checkID)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err)
+		monitoring.WriteAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	deltas, err := h.mysqlRepo.RecentDeltas(checkID, 1)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err)
+		monitoring.WriteAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -214,7 +200,7 @@ func (h *MySQLAPIHandler) handleMySQLHealthSummary(w http.ResponseWriter, r *htt
 		summary.AbortedConnectsPerSec = d.AbortedConnectsPerSec
 	}
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(summary))
+	monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(summary))
 }
 
 // handleMySQLTimeSeries returns time-series data for charting.
@@ -230,7 +216,7 @@ func (h *MySQLAPIHandler) handleMySQLTimeSeries(w http.ResponseWriter, r *http.R
 		checkID = h.firstMySQLCheckID()
 	}
 	if checkID == "" {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("checkId is required"))
+		monitoring.WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("checkId is required"))
 		return
 	}
 
@@ -238,20 +224,20 @@ func (h *MySQLAPIHandler) handleMySQLTimeSeries(w http.ResponseWriter, r *http.R
 	if metric == "" {
 		metric = "all"
 	}
-	limit := queryInt(r, "limit", 100)
+	limit := monitoring.QueryInt(r, "limit", 100)
 
 	samples, err := h.mysqlRepo.RecentSamples(checkID, limit)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err)
+		monitoring.WriteAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	// Build delta lookup by sampleID for metrics that come from deltas.
-	deltaMap := make(map[string]MySQLDelta)
+	deltaMap := make(map[string]monitoring.MySQLDelta)
 	if metric == "all" || metric == "qps" || metric == "slow_queries" || metric == "locks" {
 		deltas, err := h.mysqlRepo.RecentDeltas(checkID, limit)
 		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, err)
+			monitoring.WriteAPIError(w, http.StatusInternalServerError, err)
 			return
 		}
 		for _, d := range deltas {
@@ -312,7 +298,7 @@ func (h *MySQLAPIHandler) handleMySQLTimeSeries(w http.ResponseWriter, r *http.R
 		return points[i].Timestamp.Before(points[j].Timestamp)
 	})
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(points))
+	monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(points))
 }
 
 // handleNotificationStats returns aggregate notification statistics.
@@ -323,7 +309,7 @@ func (h *MySQLAPIHandler) handleNotificationStats(w http.ResponseWriter, r *http
 		return
 	}
 
-	all := h.outbox.(*FileNotificationOutbox).AllNotifications()
+	all := h.outbox.AllNotifications()
 
 	stats := NotificationStats{Total: len(all)}
 	for _, evt := range all {
@@ -337,7 +323,7 @@ func (h *MySQLAPIHandler) handleNotificationStats(w http.ResponseWriter, r *http
 		}
 	}
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(stats))
+	monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(stats))
 }
 
 // handleAIQueueStats returns aggregate AI queue statistics.
@@ -364,7 +350,7 @@ func (h *MySQLAPIHandler) handleAIQueueStats(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(stats))
+	monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(stats))
 }
 
 // handleExportSamples exports MySQL samples as CSV or JSON.
@@ -377,11 +363,11 @@ func (h *MySQLAPIHandler) handleExportSamples(w http.ResponseWriter, r *http.Req
 
 	checkID := strings.TrimSpace(r.URL.Query().Get("checkId"))
 	if checkID == "" {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("checkId is required"))
+		monitoring.WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("checkId is required"))
 		return
 	}
 
-	limit := queryInt(r, "limit", 100)
+	limit := monitoring.QueryInt(r, "limit", 100)
 	format := ExportFormat(strings.TrimSpace(r.URL.Query().Get("format")))
 	if format == "" {
 		format = ExportJSON
@@ -389,7 +375,7 @@ func (h *MySQLAPIHandler) handleExportSamples(w http.ResponseWriter, r *http.Req
 
 	samples, err := h.mysqlRepo.RecentSamples(checkID, limit)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err)
+		monitoring.WriteAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -425,12 +411,12 @@ func (h *MySQLAPIHandler) handleExportSamples(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(samples))
+	monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(samples))
 }
 
-// handleExportIncidents returns an http.HandlerFunc that exports incidents as CSV or JSON.
+// HandleExportIncidents returns an http.HandlerFunc that exports incidents as CSV or JSON.
 // GET /api/v1/export/incidents?format=csv|json
-func handleExportIncidents(incidentRepo IncidentRepository) http.HandlerFunc {
+func HandleExportIncidents(incidentRepo monitoring.IncidentRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -444,7 +430,7 @@ func handleExportIncidents(incidentRepo IncidentRepository) http.HandlerFunc {
 
 		incidents, err := incidentRepo.ListIncidents()
 		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, err)
+			monitoring.WriteAPIError(w, http.StatusInternalServerError, err)
 			return
 		}
 
@@ -477,13 +463,13 @@ func handleExportIncidents(incidentRepo IncidentRepository) http.HandlerFunc {
 			return
 		}
 
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(incidents))
+		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(incidents))
 	}
 }
 
-// handleExportResults returns an http.HandlerFunc that exports check results as CSV or JSON.
+// HandleExportResults returns an http.HandlerFunc that exports check results as CSV or JSON.
 // GET /api/v1/export/results?checkId=&days=&format=csv|json
-func handleExportResults(store Store, retentionDays int) http.HandlerFunc {
+func HandleExportResults(store monitoring.Store, retentionDays int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -506,7 +492,7 @@ func handleExportResults(store Store, retentionDays int) http.HandlerFunc {
 		snap := store.Snapshot()
 		cutoff := time.Now().UTC().AddDate(0, 0, -days)
 
-		var results []CheckResult
+		var results []monitoring.CheckResult
 		for _, res := range snap.Results {
 			if !res.StartedAt.Before(cutoff) {
 				if checkID == "" || res.CheckID == checkID {
@@ -549,6 +535,6 @@ func handleExportResults(store Store, retentionDays int) http.HandlerFunc {
 			return
 		}
 
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(results))
+		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(results))
 	}
 }

@@ -1,4 +1,4 @@
-package monitoring
+package notify
 
 import (
 	"encoding/json"
@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"medics-health-check/backend/internal/monitoring"
 )
 
 // ---------------------------------------------------------------------------
@@ -492,7 +494,7 @@ func TestNotificationDispatcher_MatchesFilters(t *testing.T) {
 		return NewNotificationDispatcher(store, nil, log.New(io.Discard, "", 0))
 	}
 
-	baseIncident := Incident{
+	baseIncident := monitoring.Incident{
 		ID:        "inc-1",
 		CheckID:   "mysql-health",
 		CheckName: "MySQL Health",
@@ -504,7 +506,7 @@ func TestNotificationDispatcher_MatchesFilters(t *testing.T) {
 		Metadata:  map[string]string{"server": "prod-db-01"},
 	}
 
-	baseResult := &CheckResult{
+	baseResult := &monitoring.CheckResult{
 		CheckID: "mysql-health",
 		Name:    "MySQL Health",
 		Type:    "mysql",
@@ -731,7 +733,7 @@ func TestNotificationAPIHandler(t *testing.T) {
 			t.Fatal(err)
 		}
 		dispatcher := NewNotificationDispatcher(store, nil, log.New(io.Discard, "", 0))
-		cfg := &Config{Auth: AuthConfig{Enabled: false}}
+		cfg := &monitoring.Config{Auth: monitoring.AuthConfig{Enabled: false}}
 		handler := NewNotificationAPIHandler(store, dispatcher, cfg)
 
 		mux := http.NewServeMux()
@@ -754,7 +756,7 @@ func TestNotificationAPIHandler(t *testing.T) {
 			t.Fatalf("status = %d, want 200", resp.StatusCode)
 		}
 
-		var result APIResponse
+		var result monitoring.APIResponse
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 			t.Fatal(err)
 		}
@@ -819,7 +821,7 @@ func TestNotificationAPIHandler(t *testing.T) {
 			t.Fatalf("status = %d, want 200", resp.StatusCode)
 		}
 
-		var result APIResponse
+		var result monitoring.APIResponse
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 			t.Fatal(err)
 		}
@@ -1017,7 +1019,7 @@ func TestNotificationAPIHandler(t *testing.T) {
 // apiResponseData is a helper to unmarshal the nested APIResponse.Data field.
 func apiResponseData(t *testing.T, body io.Reader, target interface{}) {
 	t.Helper()
-	var resp APIResponse
+	var resp monitoring.APIResponse
 	if err := json.NewDecoder(body).Decode(&resp); err != nil {
 		t.Fatalf("decode APIResponse: %v", err)
 	}

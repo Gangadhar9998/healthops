@@ -1,24 +1,26 @@
-package monitoring
+package notify
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
+
+	"medics-health-check/backend/internal/monitoring"
 )
 
 // NotificationAPIHandler handles notification channel API endpoints.
 type NotificationAPIHandler struct {
 	channelStore *NotificationChannelStore
 	dispatcher   *NotificationDispatcher
-	cfg          *Config
+	cfg          *monitoring.Config
 }
 
 // NewNotificationAPIHandler creates a new notification channel API handler.
 func NewNotificationAPIHandler(
 	channelStore *NotificationChannelStore,
 	dispatcher *NotificationDispatcher,
-	cfg *Config,
+	cfg *monitoring.Config,
 ) *NotificationAPIHandler {
 	return &NotificationAPIHandler{
 		channelStore: channelStore,
@@ -40,34 +42,34 @@ func (h *NotificationAPIHandler) handleChannels(w http.ResponseWriter, r *http.R
 	switch r.Method {
 	case http.MethodGet:
 		channels := h.channelStore.List()
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(channels))
+		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(channels))
 
 	case http.MethodPost:
-		if !isRequestAuthorized(h.cfg.Auth, r) {
-			requestAuth(w)
+		if !monitoring.IsRequestAuthorized(h.cfg.Auth, r) {
+			monitoring.RequestAuth(w)
 			return
 		}
 
 		var ch NotificationChannelConfig
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&ch); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			monitoring.WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 
 		if err := h.channelStore.Create(ch); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			monitoring.WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 
 		created, ok := h.channelStore.Get(ch.ID)
 		if !ok {
-			writeAPIResponse(w, http.StatusCreated, NewAPIResponse(ch.SafeView()))
+			monitoring.WriteAPIResponse(w, http.StatusCreated, monitoring.NewAPIResponse(ch.SafeView()))
 			return
 		}
-		writeAPIResponse(w, http.StatusCreated, NewAPIResponse(created))
+		monitoring.WriteAPIResponse(w, http.StatusCreated, monitoring.NewAPIResponse(created))
 
 	default:
-		writeAPIError(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
+		monitoring.WriteAPIError(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
 	}
 }
 
@@ -81,7 +83,7 @@ func (h *NotificationAPIHandler) handleChannelByID(w http.ResponseWriter, r *htt
 
 	raw := strings.TrimPrefix(r.URL.Path, "/api/v1/notification-channels/")
 	if raw == "" {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("missing channel id"))
+		monitoring.WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("missing channel id"))
 		return
 	}
 
@@ -100,7 +102,7 @@ func (h *NotificationAPIHandler) handleChannelByID(w http.ResponseWriter, r *htt
 	case "":
 		// fall through to CRUD
 	default:
-		writeAPIError(w, http.StatusNotFound, fmt.Errorf("unknown path: %s", subPath))
+		monitoring.WriteAPIError(w, http.StatusNotFound, fmt.Errorf("unknown path: %s", subPath))
 		return
 	}
 
@@ -108,61 +110,61 @@ func (h *NotificationAPIHandler) handleChannelByID(w http.ResponseWriter, r *htt
 	case http.MethodGet:
 		ch, ok := h.channelStore.Get(id)
 		if !ok {
-			writeAPIError(w, http.StatusNotFound, fmt.Errorf("channel not found: %s", id))
+			monitoring.WriteAPIError(w, http.StatusNotFound, fmt.Errorf("channel not found: %s", id))
 			return
 		}
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(ch))
+		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(ch))
 
 	case http.MethodPut:
-		if !isRequestAuthorized(h.cfg.Auth, r) {
-			requestAuth(w)
+		if !monitoring.IsRequestAuthorized(h.cfg.Auth, r) {
+			monitoring.RequestAuth(w)
 			return
 		}
 
 		var ch NotificationChannelConfig
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&ch); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			monitoring.WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 
 		if err := h.channelStore.Update(id, ch); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			monitoring.WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 
 		updated, ok := h.channelStore.Get(id)
 		if !ok {
-			writeAPIError(w, http.StatusInternalServerError, fmt.Errorf("channel not found after update"))
+			monitoring.WriteAPIError(w, http.StatusInternalServerError, fmt.Errorf("channel not found after update"))
 			return
 		}
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(updated))
+		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(updated))
 
 	case http.MethodDelete:
-		if !isRequestAuthorized(h.cfg.Auth, r) {
-			requestAuth(w)
+		if !monitoring.IsRequestAuthorized(h.cfg.Auth, r) {
+			monitoring.RequestAuth(w)
 			return
 		}
 
 		if err := h.channelStore.Delete(id); err != nil {
-			writeAPIError(w, http.StatusNotFound, err)
+			monitoring.WriteAPIError(w, http.StatusNotFound, err)
 			return
 		}
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]string{"deleted": id}))
+		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(map[string]string{"deleted": id}))
 
 	default:
-		writeAPIError(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
+		monitoring.WriteAPIError(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
 	}
 }
 
 // POST /api/v1/notification-channels/{id}/toggle — enable/disable a channel
 func (h *NotificationAPIHandler) handleToggle(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
-		writeAPIError(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
+		monitoring.WriteAPIError(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
 		return
 	}
 
-	if !isRequestAuthorized(h.cfg.Auth, r) {
-		requestAuth(w)
+	if !monitoring.IsRequestAuthorized(h.cfg.Auth, r) {
+		monitoring.RequestAuth(w)
 		return
 	}
 
@@ -170,52 +172,52 @@ func (h *NotificationAPIHandler) handleToggle(w http.ResponseWriter, r *http.Req
 		Enabled bool `json:"enabled"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
-		writeAPIError(w, http.StatusBadRequest, err)
+		monitoring.WriteAPIError(w, http.StatusBadRequest, err)
 		return
 	}
 
 	if err := h.channelStore.ToggleEnabled(id, body.Enabled); err != nil {
-		writeAPIError(w, http.StatusNotFound, err)
+		monitoring.WriteAPIError(w, http.StatusNotFound, err)
 		return
 	}
 
 	ch, ok := h.channelStore.Get(id)
 	if !ok {
-		writeAPIError(w, http.StatusInternalServerError, fmt.Errorf("channel not found after toggle"))
+		monitoring.WriteAPIError(w, http.StatusInternalServerError, fmt.Errorf("channel not found after toggle"))
 		return
 	}
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(ch))
+	monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(ch))
 }
 
 // POST /api/v1/notification-channels/test — test a channel config without saving
 func (h *NotificationAPIHandler) handleTestChannel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeAPIError(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
+		monitoring.WriteAPIError(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
 		return
 	}
 
-	if !isRequestAuthorized(h.cfg.Auth, r) {
-		requestAuth(w)
+	if !monitoring.IsRequestAuthorized(h.cfg.Auth, r) {
+		monitoring.RequestAuth(w)
 		return
 	}
 
 	var ch NotificationChannelConfig
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&ch); err != nil {
-		writeAPIError(w, http.StatusBadRequest, err)
+		monitoring.WriteAPIError(w, http.StatusBadRequest, err)
 		return
 	}
 
 	if err := ch.Validate(); err != nil {
-		writeAPIError(w, http.StatusBadRequest, err)
+		monitoring.WriteAPIError(w, http.StatusBadRequest, err)
 		return
 	}
 
 	if err := h.dispatcher.TestChannel(ch); err != nil {
-		writeAPIError(w, http.StatusBadGateway, fmt.Errorf("test failed: %w", err))
+		monitoring.WriteAPIError(w, http.StatusBadGateway, fmt.Errorf("test failed: %w", err))
 		return
 	}
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]string{
+	monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(map[string]string{
 		"status":  "ok",
 		"message": "test notification sent successfully",
 	}))

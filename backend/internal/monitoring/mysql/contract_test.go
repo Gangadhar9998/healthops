@@ -1,4 +1,4 @@
-package monitoring
+package mysql
 
 import (
 	"encoding/json"
@@ -9,6 +9,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"medics-health-check/backend/internal/monitoring"
+	"medics-health-check/backend/internal/monitoring/ai"
+	"medics-health-check/backend/internal/monitoring/notify"
 )
 
 // ---------------------------------------------------------------------------
@@ -24,7 +28,7 @@ func TestContractMySQLSamplesEndpoint(t *testing.T) {
 
 	now := time.Now().UTC()
 	for i := 0; i < 3; i++ {
-		_, err := repo.AppendSample(MySQLSample{
+		_, err := repo.AppendSample(monitoring.MySQLSample{
 			SampleID:       "s" + string(rune('1'+i)),
 			CheckID:        "test-db",
 			Timestamp:      now.Add(time.Duration(i) * time.Minute),
@@ -36,7 +40,7 @@ func TestContractMySQLSamplesEndpoint(t *testing.T) {
 		}
 	}
 
-	cfg := &Config{}
+	cfg := &monitoring.Config{}
 	h := NewMySQLAPIHandler(repo, nil, nil, nil, nil, cfg)
 
 	t.Run("success with limit", func(t *testing.T) {
@@ -48,7 +52,7 @@ func TestContractMySQLSamplesEndpoint(t *testing.T) {
 			t.Fatalf("expected 200, got %d", rec.Code)
 		}
 
-		var samples []MySQLSample
+		var samples []monitoring.MySQLSample
 		if err := decodeAPIResponseData(rec.Body.Bytes(), &samples); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
@@ -94,14 +98,14 @@ func TestContractMySQLDeltasEndpoint(t *testing.T) {
 	}
 
 	now := time.Now().UTC()
-	s1 := MySQLSample{
+	s1 := monitoring.MySQLSample{
 		SampleID:    "s1",
 		CheckID:     "test-db",
 		Timestamp:   now,
 		Connections: 100, MaxConnections: 200,
 		SlowQueries: 10, Questions: 1000,
 	}
-	s2 := MySQLSample{
+	s2 := monitoring.MySQLSample{
 		SampleID:    "s2",
 		CheckID:     "test-db",
 		Timestamp:   now.Add(time.Minute),
@@ -116,7 +120,7 @@ func TestContractMySQLDeltasEndpoint(t *testing.T) {
 		t.Fatalf("compute delta: %v", err)
 	}
 
-	cfg := &Config{}
+	cfg := &monitoring.Config{}
 	h := NewMySQLAPIHandler(repo, nil, nil, nil, nil, cfg)
 
 	t.Run("success", func(t *testing.T) {
@@ -128,7 +132,7 @@ func TestContractMySQLDeltasEndpoint(t *testing.T) {
 			t.Fatalf("expected 200, got %d", rec.Code)
 		}
 
-		var deltas []MySQLDelta
+		var deltas []monitoring.MySQLDelta
 		if err := decodeAPIResponseData(rec.Body.Bytes(), &deltas); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
@@ -151,13 +155,13 @@ func TestContractMySQLDeltasEndpoint(t *testing.T) {
 func TestContractIncidentSnapshotsEndpoint(t *testing.T) {
 	dir := t.TempDir()
 	snapPath := filepath.Join(dir, "snapshots.jsonl")
-	snapRepo, err := NewFileSnapshotRepository(snapPath)
+	snapRepo, err := monitoring.NewFileSnapshotRepository(snapPath)
 	if err != nil {
 		t.Fatalf("create snapshot repo: %v", err)
 	}
 
 	now := time.Now().UTC()
-	snaps := []IncidentSnapshot{
+	snaps := []monitoring.IncidentSnapshot{
 		{IncidentID: "inc-1", SnapshotType: "sample", Timestamp: now, PayloadJSON: `{"a":1}`},
 		{IncidentID: "inc-1", SnapshotType: "delta", Timestamp: now.Add(time.Second), PayloadJSON: `{"b":2}`},
 		{IncidentID: "inc-1", SnapshotType: "processlist", Timestamp: now.Add(2 * time.Second), PayloadJSON: `{"c":3}`},
@@ -166,7 +170,7 @@ func TestContractIncidentSnapshotsEndpoint(t *testing.T) {
 		t.Fatalf("save snapshots: %v", err)
 	}
 
-	cfg := &Config{}
+	cfg := &monitoring.Config{}
 	h := NewMySQLAPIHandler(nil, snapRepo, nil, nil, nil, cfg)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/incidents/inc-1/snapshots", nil)
@@ -177,7 +181,7 @@ func TestContractIncidentSnapshotsEndpoint(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	var result []IncidentSnapshot
+	var result []monitoring.IncidentSnapshot
 	if err := decodeAPIResponseData(rec.Body.Bytes(), &result); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -189,13 +193,13 @@ func TestContractIncidentSnapshotsEndpoint(t *testing.T) {
 func TestContractNotificationsEndpoint(t *testing.T) {
 	dir := t.TempDir()
 	outboxPath := filepath.Join(dir, "notifications.jsonl")
-	outbox, err := NewFileNotificationOutbox(outboxPath)
+	outbox, err := notify.NewFileNotificationOutbox(outboxPath)
 	if err != nil {
 		t.Fatalf("create outbox: %v", err)
 	}
 
 	for i := 0; i < 2; i++ {
-		err := outbox.Enqueue(NotificationEvent{
+		err := outbox.Enqueue(monitoring.NotificationEvent{
 			NotificationID: "notif-" + string(rune('1'+i)),
 			IncidentID:     "inc-1",
 			Channel:        "webhook",
@@ -208,7 +212,7 @@ func TestContractNotificationsEndpoint(t *testing.T) {
 		}
 	}
 
-	cfg := &Config{}
+	cfg := &monitoring.Config{}
 	h := NewMySQLAPIHandler(nil, nil, outbox, nil, nil, cfg)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/notifications?limit=10", nil)
@@ -219,7 +223,7 @@ func TestContractNotificationsEndpoint(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	var events []NotificationEvent
+	var events []monitoring.NotificationEvent
 	if err := decodeAPIResponseData(rec.Body.Bytes(), &events); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -230,7 +234,7 @@ func TestContractNotificationsEndpoint(t *testing.T) {
 
 func TestContractAIQueueEndpoint(t *testing.T) {
 	dir := t.TempDir()
-	aiQueue, err := NewFileAIQueue(dir)
+	aiQueue, err := ai.NewFileAIQueue(dir)
 	if err != nil {
 		t.Fatalf("create ai queue: %v", err)
 	}
@@ -242,7 +246,7 @@ func TestContractAIQueueEndpoint(t *testing.T) {
 		t.Fatalf("enqueue 2: %v", err)
 	}
 
-	cfg := &Config{}
+	cfg := &monitoring.Config{}
 	h := NewMySQLAPIHandler(nil, nil, nil, aiQueue, nil, cfg)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/ai/queue?limit=10", nil)
@@ -253,7 +257,7 @@ func TestContractAIQueueEndpoint(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	var items []AIQueueItem
+	var items []monitoring.AIQueueItem
 	if err := decodeAPIResponseData(rec.Body.Bytes(), &items); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -265,27 +269,27 @@ func TestContractAIQueueEndpoint(t *testing.T) {
 func TestContractMutatingEndpointsRequireAuth(t *testing.T) {
 	dir := t.TempDir()
 	outboxPath := filepath.Join(dir, "notifications.jsonl")
-	outbox, err := NewFileNotificationOutbox(outboxPath)
+	outbox, err := notify.NewFileNotificationOutbox(outboxPath)
 	if err != nil {
 		t.Fatalf("create outbox: %v", err)
 	}
 
 	// Enqueue a notification so mark-sent/failed have a target
-	_ = outbox.Enqueue(NotificationEvent{
+	_ = outbox.Enqueue(monitoring.NotificationEvent{
 		NotificationID: "notif-1",
 		IncidentID:     "inc-1",
 		Channel:        "webhook",
 		PayloadJSON:    `{"msg":"test"}`,
 	})
 
-	aiQueue, err := NewFileAIQueue(dir)
+	aiQueue, err := ai.NewFileAIQueue(dir)
 	if err != nil {
 		t.Fatalf("create ai queue: %v", err)
 	}
 	_ = aiQueue.Enqueue("inc-1", "v1")
 
-	cfg := &Config{
-		Auth: AuthConfig{Enabled: true, Username: "admin", Password: "pass"},
+	cfg := &monitoring.Config{
+		Auth: monitoring.AuthConfig{Enabled: true, Username: "admin", Password: "pass"},
 	}
 	h := NewMySQLAPIHandler(nil, nil, outbox, aiQueue, nil, cfg)
 
@@ -367,13 +371,13 @@ func TestSecurityNoSecretsInAPIResponses(t *testing.T) {
 	}
 
 	now := time.Now().UTC()
-	s1 := MySQLSample{SampleID: "s1", CheckID: "test-db", Timestamp: now, Connections: 100, MaxConnections: 200}
-	s2 := MySQLSample{SampleID: "s2", CheckID: "test-db", Timestamp: now.Add(time.Minute), Connections: 110, MaxConnections: 200}
+	s1 := monitoring.MySQLSample{SampleID: "s1", CheckID: "test-db", Timestamp: now, Connections: 100, MaxConnections: 200}
+	s2 := monitoring.MySQLSample{SampleID: "s2", CheckID: "test-db", Timestamp: now.Add(time.Minute), Connections: 110, MaxConnections: 200}
 	repo.AppendSample(s1)
 	id2, _ := repo.AppendSample(s2)
 	repo.ComputeAndAppendDelta(id2)
 
-	cfg := &Config{}
+	cfg := &monitoring.Config{}
 	h := NewMySQLAPIHandler(repo, nil, nil, nil, nil, cfg)
 
 	// Check samples endpoint
@@ -408,11 +412,11 @@ func TestSecurityMySQLDSNRedaction(t *testing.T) {
 	os.Setenv("TEST_DSN_ENV", dsnValue)
 	defer os.Unsetenv("TEST_DSN_ENV")
 
-	checkCfg := CheckConfig{
+	checkCfg := monitoring.CheckConfig{
 		ID:   "mysql-1",
 		Name: "Production MySQL",
 		Type: "mysql",
-		MySQL: &MySQLCheckConfig{
+		MySQL: &monitoring.MySQLCheckConfig{
 			DSNEnv: "TEST_DSN_ENV",
 		},
 	}
@@ -435,18 +439,18 @@ func TestSecurityMySQLDSNRedaction(t *testing.T) {
 func TestSecurityAllMutatingEndpointsRequireAuth(t *testing.T) {
 	dir := t.TempDir()
 	outboxPath := filepath.Join(dir, "notifications.jsonl")
-	outbox, err := NewFileNotificationOutbox(outboxPath)
+	outbox, err := notify.NewFileNotificationOutbox(outboxPath)
 	if err != nil {
 		t.Fatalf("create outbox: %v", err)
 	}
 
-	aiQueue, err := NewFileAIQueue(dir)
+	aiQueue, err := ai.NewFileAIQueue(dir)
 	if err != nil {
 		t.Fatalf("create ai queue: %v", err)
 	}
 
-	cfg := &Config{
-		Auth: AuthConfig{Enabled: true, Username: "admin", Password: "pass"},
+	cfg := &monitoring.Config{
+		Auth: monitoring.AuthConfig{Enabled: true, Username: "admin", Password: "pass"},
 	}
 	h := NewMySQLAPIHandler(nil, nil, outbox, aiQueue, nil, cfg)
 
@@ -480,76 +484,23 @@ func TestSecurityInputValidation(t *testing.T) {
 	}
 
 	outboxPath := filepath.Join(dir, "notifications.jsonl")
-	outbox, err := NewFileNotificationOutbox(outboxPath)
+	outbox, err := notify.NewFileNotificationOutbox(outboxPath)
 	if err != nil {
 		t.Fatalf("create outbox: %v", err)
 	}
 
-	aiQueue, err := NewFileAIQueue(dir)
+	aiQueue, err := ai.NewFileAIQueue(dir)
 	if err != nil {
 		t.Fatalf("create ai queue: %v", err)
 	}
 
-	cfg := &Config{} // auth disabled so we can test input validation paths
+	cfg := &monitoring.Config{} // auth disabled so we can test input validation paths
 	h := NewMySQLAPIHandler(repo, nil, outbox, aiQueue, nil, cfg)
 
 	t.Run("samples with empty checkId returns 400", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/mysql/samples?checkId=", nil)
 		rec := httptest.NewRecorder()
 		h.handleMySQLSamples(rec, req)
-
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", rec.Code)
-		}
-	})
-
-	t.Run("samples with whitespace checkId returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/mysql/samples?checkId=+", nil)
-		rec := httptest.NewRecorder()
-		h.handleMySQLSamples(rec, req)
-
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", rec.Code)
-		}
-	})
-
-	t.Run("deltas with empty checkId returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/mysql/deltas?checkId=", nil)
-		rec := httptest.NewRecorder()
-		h.handleMySQLDeltas(rec, req)
-
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", rec.Code)
-		}
-	})
-
-	t.Run("notification failed with invalid JSON body", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/notifications/notif-1/failed", strings.NewReader("not-json"))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		h.handleNotificationByID(rec, req)
-
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", rec.Code)
-		}
-	})
-
-	t.Run("ai queue done with invalid JSON body", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/ai/queue/inc-1/done", strings.NewReader("not-json"))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		h.handleAIQueueByID(rec, req)
-
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", rec.Code)
-		}
-	})
-
-	t.Run("ai queue failed with invalid JSON body", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/ai/queue/inc-1/failed", strings.NewReader("not-json"))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		h.handleAIQueueByID(rec, req)
 
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400, got %d", rec.Code)

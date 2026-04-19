@@ -139,37 +139,37 @@ func (s *Service) handleConfigGet(w http.ResponseWriter, _ *http.Request) {
 		TotalChecks:          len(s.cfg.Checks),
 		TotalServers:         len(s.cfg.Servers),
 	}
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(view))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(view))
 }
 
 func (s *Service) handleConfigPut(w http.ResponseWriter, r *http.Request) {
-	if !isRequestAuthorized(s.cfg.Auth, r) {
-		requestAuth(w)
+	if !IsRequestAuthorized(s.cfg.Auth, r) {
+		RequestAuth(w)
 		return
 	}
 
 	var update ConfigUpdate
 	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
+		WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
 		return
 	}
 
 	// Validate
 	if update.RetentionDays != nil {
 		if *update.RetentionDays < 1 || *update.RetentionDays > 365 {
-			writeAPIError(w, http.StatusBadRequest, fmt.Errorf("retentionDays must be 1-365"))
+			WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("retentionDays must be 1-365"))
 			return
 		}
 	}
 	if update.CheckIntervalSeconds != nil {
 		if *update.CheckIntervalSeconds < 5 || *update.CheckIntervalSeconds > 3600 {
-			writeAPIError(w, http.StatusBadRequest, fmt.Errorf("checkIntervalSeconds must be 5-3600"))
+			WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("checkIntervalSeconds must be 5-3600"))
 			return
 		}
 	}
 	if update.Workers != nil {
 		if *update.Workers < 1 || *update.Workers > 100 {
-			writeAPIError(w, http.StatusBadRequest, fmt.Errorf("workers must be 1-100"))
+			WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("workers must be 1-100"))
 			return
 		}
 	}
@@ -198,7 +198,7 @@ func (s *Service) handleConfigPut(w http.ResponseWriter, r *http.Request) {
 		_ = s.auditLogger.Log("config.updated", actor, "config", "", details)
 	}
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(s.safeConfigView()))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(s.safeConfigView()))
 }
 
 func (s *Service) safeConfigView() SafeConfigView {
@@ -222,7 +222,7 @@ func (s *Service) handleAlertRules(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		rules := s.alertEngine.Rules()
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(rules))
+		WriteAPIResponse(w, http.StatusOK, NewAPIResponse(rules))
 	case http.MethodPost:
 		s.handleAlertRuleCreate(w, r)
 	default:
@@ -231,19 +231,19 @@ func (s *Service) handleAlertRules(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleAlertRuleCreate(w http.ResponseWriter, r *http.Request) {
-	if !isRequestAuthorized(s.cfg.Auth, r) {
-		requestAuth(w)
+	if !IsRequestAuthorized(s.cfg.Auth, r) {
+		RequestAuth(w)
 		return
 	}
 
 	var rule AlertRule
 	if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
+		WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
 		return
 	}
 
 	if rule.ID == "" || rule.Name == "" || rule.Severity == "" {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("id, name, and severity are required"))
+		WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("id, name, and severity are required"))
 		return
 	}
 
@@ -257,7 +257,7 @@ func (s *Service) handleAlertRuleCreate(w http.ResponseWriter, r *http.Request) 
 		})
 	}
 
-	writeAPIResponse(w, http.StatusCreated, NewAPIResponse(rule))
+	WriteAPIResponse(w, http.StatusCreated, NewAPIResponse(rule))
 }
 
 func (s *Service) handleAlertRuleByID(w http.ResponseWriter, r *http.Request) {
@@ -265,7 +265,7 @@ func (s *Service) handleAlertRuleByID(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/alert-rules/"), "/")
 	id := parts[0]
 	if id == "" {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("rule id is required"))
+		WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("rule id is required"))
 		return
 	}
 
@@ -283,32 +283,32 @@ func (s *Service) handleAlertRuleByID(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) handleAlertRuleGet(w http.ResponseWriter, _ *http.Request, id string) {
 	if s.alertEngine == nil {
-		writeAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("alert engine not configured"))
+		WriteAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("alert engine not configured"))
 		return
 	}
 	rule, err := s.alertEngine.GetRule(id)
 	if err != nil {
-		writeAPIError(w, http.StatusNotFound, err)
+		WriteAPIError(w, http.StatusNotFound, err)
 		return
 	}
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(rule))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(rule))
 }
 
 func (s *Service) handleAlertRuleUpdate(w http.ResponseWriter, r *http.Request, id string) {
-	if !isRequestAuthorized(s.cfg.Auth, r) {
-		requestAuth(w)
+	if !IsRequestAuthorized(s.cfg.Auth, r) {
+		RequestAuth(w)
 		return
 	}
 
 	var rule AlertRule
 	if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
+		WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
 		return
 	}
 
 	rule.ID = id // ensure path ID takes precedence
 	if err := s.alertEngine.UpdateRule(rule); err != nil {
-		writeAPIError(w, http.StatusNotFound, err)
+		WriteAPIError(w, http.StatusNotFound, err)
 		return
 	}
 
@@ -320,17 +320,17 @@ func (s *Service) handleAlertRuleUpdate(w http.ResponseWriter, r *http.Request, 
 		})
 	}
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(rule))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(rule))
 }
 
 func (s *Service) handleAlertRuleDelete(w http.ResponseWriter, r *http.Request, id string) {
-	if !isRequestAuthorized(s.cfg.Auth, r) {
-		requestAuth(w)
+	if !IsRequestAuthorized(s.cfg.Auth, r) {
+		RequestAuth(w)
 		return
 	}
 
 	if err := s.alertEngine.DeleteRule(id); err != nil {
-		writeAPIError(w, http.StatusNotFound, err)
+		WriteAPIError(w, http.StatusNotFound, err)
 		return
 	}
 
@@ -339,7 +339,7 @@ func (s *Service) handleAlertRuleDelete(w http.ResponseWriter, r *http.Request, 
 		_ = s.auditLogger.Log("alertrule.deleted", actor, "alertRule", id, nil)
 	}
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]string{"deleted": id}))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]string{"deleted": id}))
 }
 
 // ---------------------------------------------------------------------------
@@ -356,8 +356,8 @@ func (s *Service) handleIncidentsFiltered(w http.ResponseWriter, r *http.Request
 		Status:   r.URL.Query().Get("status"),
 		Severity: r.URL.Query().Get("severity"),
 		CheckID:  r.URL.Query().Get("checkId"),
-		Limit:    queryInt(r, "limit", 50),
-		Offset:   queryInt(r, "offset", 0),
+		Limit:    QueryInt(r, "limit", 50),
+		Offset:   QueryInt(r, "offset", 0),
 	}
 
 	if filter.Limit < 1 {
@@ -368,13 +368,13 @@ func (s *Service) handleIncidentsFiltered(w http.ResponseWriter, r *http.Request
 	}
 
 	if s.incidentManager == nil {
-		writeAPIResponse(w, http.StatusOK, NewPaginatedResponse([]Incident{}, 0, filter.Limit, filter.Offset))
+		WriteAPIResponse(w, http.StatusOK, NewPaginatedResponse([]Incident{}, 0, filter.Limit, filter.Offset))
 		return
 	}
 
 	incidents, err := s.incidentManager.repo.ListIncidents()
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, fmt.Errorf("list incidents: %w", err))
+		WriteAPIError(w, http.StatusInternalServerError, fmt.Errorf("list incidents: %w", err))
 		return
 	}
 
@@ -406,7 +406,7 @@ func (s *Service) handleIncidentsFiltered(w http.ResponseWriter, r *http.Request
 	}
 	page := filtered[start:end]
 
-	writeAPIResponse(w, http.StatusOK, NewPaginatedResponse(page, total, filter.Limit, filter.Offset))
+	WriteAPIResponse(w, http.StatusOK, NewPaginatedResponse(page, total, filter.Limit, filter.Offset))
 }
 
 // ---------------------------------------------------------------------------
@@ -416,7 +416,7 @@ func (s *Service) handleIncidentsFiltered(w http.ResponseWriter, r *http.Request
 func (s *Service) handleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		writeAPIError(w, http.StatusInternalServerError, fmt.Errorf("streaming not supported"))
+		WriteAPIError(w, http.StatusInternalServerError, fmt.Errorf("streaming not supported"))
 		return
 	}
 
@@ -485,5 +485,5 @@ func (s *Service) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 		Username:    ExtractActorFromRequest(r, s.cfg),
 		AuthEnabled: s.cfg.Auth.Enabled,
 	}
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(info))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(info))
 }

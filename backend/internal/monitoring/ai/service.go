@@ -1,4 +1,4 @@
-package monitoring
+package ai
 
 import (
 	"context"
@@ -9,6 +9,8 @@ import (
 	"sync"
 	"text/template"
 	"time"
+
+	"medics-health-check/backend/internal/monitoring"
 )
 
 // AIService orchestrates AI-powered incident analysis.
@@ -18,9 +20,9 @@ type AIService struct {
 
 	configStore  *AIConfigStore
 	aiQueue      *FileAIQueue
-	incidentRepo IncidentRepository
-	snapshotRepo IncidentSnapshotRepository
-	store        Store // for check results
+	incidentRepo monitoring.IncidentRepository
+	snapshotRepo monitoring.IncidentSnapshotRepository
+	store        monitoring.Store // for check results
 	logger       *log.Logger
 
 	// runtime state
@@ -33,9 +35,9 @@ type AIService struct {
 func NewAIService(
 	configStore *AIConfigStore,
 	aiQueue *FileAIQueue,
-	incidentRepo IncidentRepository,
-	snapshotRepo IncidentSnapshotRepository,
-	store Store,
+	incidentRepo monitoring.IncidentRepository,
+	snapshotRepo monitoring.IncidentSnapshotRepository,
+	store monitoring.Store,
 	logger *log.Logger,
 ) *AIService {
 	if logger == nil {
@@ -190,7 +192,7 @@ func (s *AIService) processQueue(cfg AIServiceConfig) {
 		wg.Add(1)
 		sem <- struct{}{} // acquire semaphore
 
-		go func(item AIQueueItem) {
+		go func(item monitoring.AIQueueItem) {
 			defer wg.Done()
 			defer func() { <-sem }() // release semaphore
 
@@ -201,7 +203,7 @@ func (s *AIService) processQueue(cfg AIServiceConfig) {
 	wg.Wait()
 }
 
-func (s *AIService) analyzeItem(item AIQueueItem, cfg AIServiceConfig) {
+func (s *AIService) analyzeItem(item monitoring.AIQueueItem, cfg AIServiceConfig) {
 	provider, providerID, err := s.getDefaultProvider()
 	if err != nil {
 		_ = s.aiQueue.Fail(item.IncidentID, fmt.Sprintf("no provider: %v", err))
@@ -255,7 +257,7 @@ func (s *AIService) analyzeItem(item AIQueueItem, cfg AIServiceConfig) {
 
 // --- Prompt Building ---
 
-func (s *AIService) buildPrompt(item AIQueueItem, cfg AIServiceConfig) (string, string, error) {
+func (s *AIService) buildPrompt(item monitoring.AIQueueItem, cfg AIServiceConfig) (string, string, error) {
 	// Find the right prompt template
 	tmpl := s.findPromptTemplate(item, cfg)
 
@@ -282,7 +284,7 @@ func (s *AIService) buildPrompt(item AIQueueItem, cfg AIServiceConfig) (string, 
 	var recentResults string
 	if s.store != nil {
 		state := s.store.Snapshot()
-		var matchingResults []CheckResult
+		var matchingResults []monitoring.CheckResult
 		for _, r := range state.Results {
 			if r.CheckID == incident.CheckID {
 				matchingResults = append(matchingResults, r)
@@ -333,7 +335,7 @@ func (s *AIService) buildPrompt(item AIQueueItem, cfg AIServiceConfig) (string, 
 	return systemMsg, userMsg, nil
 }
 
-func (s *AIService) findPromptTemplate(item AIQueueItem, cfg AIServiceConfig) AIPromptTemplate {
+func (s *AIService) findPromptTemplate(item monitoring.AIQueueItem, cfg AIServiceConfig) AIPromptTemplate {
 	// Check if there's a specific prompt version requested
 	if item.PromptVersion != "" {
 		for _, p := range cfg.Prompts {
@@ -395,8 +397,8 @@ func renderTemplate(tmplStr string, data map[string]interface{}) (string, error)
 
 // --- Response Parsing ---
 
-func (s *AIService) parseAnalysisResponse(incidentID, responseText string) AIAnalysisResult {
-	result := AIAnalysisResult{
+func (s *AIService) parseAnalysisResponse(incidentID, responseText string) monitoring.AIAnalysisResult {
+	result := monitoring.AIAnalysisResult{
 		IncidentID: incidentID,
 		Analysis:   responseText,
 		CreatedAt:  time.Now().UTC(),
@@ -495,7 +497,7 @@ func extractJSON(text string) string {
 // --- Manual Analysis Trigger ---
 
 // AnalyzeIncident triggers AI analysis for a specific incident (on-demand, not queued).
-func (s *AIService) AnalyzeIncident(ctx context.Context, incidentID string, providerID string) (*AIAnalysisResult, error) {
+func (s *AIService) AnalyzeIncident(ctx context.Context, incidentID string, providerID string) (*monitoring.AIAnalysisResult, error) {
 	cfg := s.configStore.Get()
 	if !cfg.Enabled {
 		return nil, fmt.Errorf("AI analysis is disabled")
@@ -516,7 +518,7 @@ func (s *AIService) AnalyzeIncident(ctx context.Context, incidentID string, prov
 		}
 	}
 
-	item := AIQueueItem{
+	item := monitoring.AIQueueItem{
 		IncidentID:    incidentID,
 		PromptVersion: cfg.DefaultPromptID,
 	}

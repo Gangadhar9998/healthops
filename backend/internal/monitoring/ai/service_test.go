@@ -1,4 +1,4 @@
-package monitoring
+package ai
 
 import (
 	"context"
@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"medics-health-check/backend/internal/monitoring"
 )
 
 // --- AI Config Store Tests ---
@@ -358,7 +360,7 @@ func TestAIServiceGetResults(t *testing.T) {
 	// Complete an item with a result
 	_ = aiQueue.Enqueue("inc-result-1", "v1")
 	_, _ = aiQueue.ClaimPending(1)
-	_ = aiQueue.Complete("inc-result-1", AIAnalysisResult{
+	_ = aiQueue.Complete("inc-result-1", monitoring.AIAnalysisResult{
 		IncidentID:  "inc-result-1",
 		Analysis:    "Root cause: disk full",
 		Suggestions: []string{"expand disk", "cleanup old files"},
@@ -459,7 +461,7 @@ func TestParseAnalysisResponse(t *testing.T) {
 func TestAIAPIConfigGet(t *testing.T) {
 	dir := t.TempDir()
 	configStore, _ := NewAIConfigStore(dir)
-	handler := NewAIAPIHandler(nil, configStore, nil, &Config{})
+	handler := NewAIAPIHandler(nil, configStore, nil, &monitoring.Config{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/ai/config", nil)
 	rr := httptest.NewRecorder()
@@ -469,7 +471,7 @@ func TestAIAPIConfigGet(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
 
-	var resp APIResponse
+	var resp monitoring.APIResponse
 	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -481,7 +483,7 @@ func TestAIAPIConfigGet(t *testing.T) {
 func TestAIAPIConfigUpdate(t *testing.T) {
 	dir := t.TempDir()
 	configStore, _ := NewAIConfigStore(dir)
-	handler := NewAIAPIHandler(nil, configStore, nil, &Config{})
+	handler := NewAIAPIHandler(nil, configStore, nil, &monitoring.Config{})
 
 	body := `{"enabled": true, "maxConcurrent": 4}`
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/ai/config", strings.NewReader(body))
@@ -506,7 +508,7 @@ func TestAIAPIProvidersCRUD(t *testing.T) {
 	configStore, _ := NewAIConfigStore(dir)
 	aiQueue, _ := NewFileAIQueue(dir)
 	aiService := NewAIService(configStore, aiQueue, nil, nil, nil, nil)
-	handler := NewAIAPIHandler(aiService, configStore, nil, &Config{})
+	handler := NewAIAPIHandler(aiService, configStore, nil, &monitoring.Config{})
 
 	// CREATE
 	body := `{"id":"p1","provider":"openai","name":"My OpenAI","apiKey":"sk-test1234567890abcdef","model":"gpt-4o","enabled":true,"isDefault":true}`
@@ -574,7 +576,7 @@ func TestAIAPIProvidersCRUD(t *testing.T) {
 func TestAIAPIPromptsCRUD(t *testing.T) {
 	dir := t.TempDir()
 	configStore, _ := NewAIConfigStore(dir)
-	handler := NewAIAPIHandler(nil, configStore, nil, &Config{})
+	handler := NewAIAPIHandler(nil, configStore, nil, &monitoring.Config{})
 
 	// LIST defaults
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/ai/prompts", nil)
@@ -616,7 +618,7 @@ func TestAIAPIHealthEndpoint(t *testing.T) {
 	configStore, _ := NewAIConfigStore(dir)
 	aiQueue, _ := NewFileAIQueue(dir)
 	aiService := NewAIService(configStore, aiQueue, nil, nil, nil, nil)
-	handler := NewAIAPIHandler(aiService, configStore, nil, &Config{})
+	handler := NewAIAPIHandler(aiService, configStore, nil, &monitoring.Config{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/ai/health", nil)
 	rr := httptest.NewRecorder()
@@ -632,12 +634,12 @@ func TestAIAPIResultsEndpoint(t *testing.T) {
 	configStore, _ := NewAIConfigStore(dir)
 	aiQueue, _ := NewFileAIQueue(dir)
 	aiService := NewAIService(configStore, aiQueue, nil, nil, nil, nil)
-	handler := NewAIAPIHandler(aiService, configStore, nil, &Config{})
+	handler := NewAIAPIHandler(aiService, configStore, nil, &monitoring.Config{})
 
 	// Store a result
 	_ = aiQueue.Enqueue("inc-api-test", "v1")
 	_, _ = aiQueue.ClaimPending(1)
-	_ = aiQueue.Complete("inc-api-test", AIAnalysisResult{
+	_ = aiQueue.Complete("inc-api-test", monitoring.AIAnalysisResult{
 		IncidentID: "inc-api-test",
 		Analysis:   "Test analysis",
 		CreatedAt:  time.Now().UTC(),
@@ -651,7 +653,7 @@ func TestAIAPIResultsEndpoint(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
 
-	var resp APIResponse
+	var resp monitoring.APIResponse
 	_ = json.NewDecoder(rr.Body).Decode(&resp)
 	if !resp.Success {
 		t.Error("expected ok=true")
@@ -661,13 +663,13 @@ func TestAIAPIResultsEndpoint(t *testing.T) {
 // --- Incident Manager Integration Test ---
 
 func TestIncidentManagerCallbackOnCreate(t *testing.T) {
-	repo := NewMemoryIncidentRepository()
-	im := NewIncidentManager(repo, nil)
+	repo := monitoring.NewMemoryIncidentRepository()
+	im := monitoring.NewIncidentManager(repo, nil)
 
 	var callbackCalled bool
 	var callbackIncidentID string
 
-	im.SetOnIncidentCreated(func(incident Incident) {
+	im.SetOnIncidentCreated(func(incident monitoring.Incident) {
 		callbackCalled = true
 		callbackIncidentID = incident.ID
 	})

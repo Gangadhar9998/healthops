@@ -1,10 +1,12 @@
-package monitoring
+package notify
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"medics-health-check/backend/internal/monitoring"
 )
 
 func TestFileNotificationOutbox_EnqueueAndListPending(t *testing.T) {
@@ -16,7 +18,7 @@ func TestFileNotificationOutbox_EnqueueAndListPending(t *testing.T) {
 		t.Fatalf("create outbox: %v", err)
 	}
 
-	evt := NotificationEvent{
+	evt := monitoring.NotificationEvent{
 		IncidentID:  "inc-1",
 		Channel:     "slack",
 		PayloadJSON: `{"msg":"test"}`,
@@ -46,7 +48,7 @@ func TestFileNotificationOutbox_AutoGeneratesID(t *testing.T) {
 	path := filepath.Join(dir, "outbox.jsonl")
 
 	outbox, _ := NewFileNotificationOutbox(path)
-	_ = outbox.Enqueue(NotificationEvent{IncidentID: "inc-1", Channel: "email"})
+	_ = outbox.Enqueue(monitoring.NotificationEvent{IncidentID: "inc-1", Channel: "email"})
 
 	pending, _ := outbox.ListPending(10)
 	if len(pending) != 1 {
@@ -62,7 +64,7 @@ func TestFileNotificationOutbox_MarkSent(t *testing.T) {
 	path := filepath.Join(dir, "outbox.jsonl")
 
 	outbox, _ := NewFileNotificationOutbox(path)
-	_ = outbox.Enqueue(NotificationEvent{
+	_ = outbox.Enqueue(monitoring.NotificationEvent{
 		NotificationID: "notif-1",
 		IncidentID:     "inc-1",
 		Channel:        "slack",
@@ -84,7 +86,7 @@ func TestFileNotificationOutbox_MarkSentTwice(t *testing.T) {
 	path := filepath.Join(dir, "outbox.jsonl")
 
 	outbox, _ := NewFileNotificationOutbox(path)
-	_ = outbox.Enqueue(NotificationEvent{
+	_ = outbox.Enqueue(monitoring.NotificationEvent{
 		NotificationID: "notif-1",
 		IncidentID:     "inc-1",
 		Channel:        "slack",
@@ -113,7 +115,7 @@ func TestFileNotificationOutbox_MarkFailed(t *testing.T) {
 	path := filepath.Join(dir, "outbox.jsonl")
 
 	outbox, _ := NewFileNotificationOutbox(path)
-	_ = outbox.Enqueue(NotificationEvent{
+	_ = outbox.Enqueue(monitoring.NotificationEvent{
 		NotificationID: "notif-1",
 		IncidentID:     "inc-1",
 		Channel:        "slack",
@@ -148,13 +150,13 @@ func TestFileNotificationOutbox_PruneBefore(t *testing.T) {
 	outbox, _ := NewFileNotificationOutbox(path)
 
 	now := time.Now().UTC()
-	_ = outbox.Enqueue(NotificationEvent{
+	_ = outbox.Enqueue(monitoring.NotificationEvent{
 		NotificationID: "old",
 		IncidentID:     "inc-old",
 		Channel:        "slack",
 		CreatedAt:      now.Add(-48 * time.Hour),
 	})
-	_ = outbox.Enqueue(NotificationEvent{
+	_ = outbox.Enqueue(monitoring.NotificationEvent{
 		NotificationID: "new",
 		IncidentID:     "inc-new",
 		Channel:        "slack",
@@ -177,7 +179,7 @@ func TestFileNotificationOutbox_Persistence(t *testing.T) {
 	path := filepath.Join(dir, "outbox.jsonl")
 
 	outbox1, _ := NewFileNotificationOutbox(path)
-	_ = outbox1.Enqueue(NotificationEvent{
+	_ = outbox1.Enqueue(monitoring.NotificationEvent{
 		NotificationID: "persist-test",
 		IncidentID:     "inc-1",
 		Channel:        "webhook",
@@ -207,7 +209,7 @@ func TestFileNotificationOutbox_ListPendingLimit(t *testing.T) {
 
 	outbox, _ := NewFileNotificationOutbox(path)
 	for i := 0; i < 10; i++ {
-		_ = outbox.Enqueue(NotificationEvent{IncidentID: "inc", Channel: "slack"})
+		_ = outbox.Enqueue(monitoring.NotificationEvent{IncidentID: "inc", Channel: "slack"})
 	}
 
 	pending, _ := outbox.ListPending(3)
@@ -221,7 +223,7 @@ func TestEnqueueIncidentNotification(t *testing.T) {
 	path := filepath.Join(dir, "outbox.jsonl")
 
 	outbox, _ := NewFileNotificationOutbox(path)
-	incident := Incident{
+	incident := monitoring.Incident{
 		ID:       "inc-1",
 		CheckID:  "mysql-1",
 		Severity: "critical",

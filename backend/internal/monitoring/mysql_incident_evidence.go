@@ -33,7 +33,7 @@ func NewFileSnapshotRepository(path string) (*FileSnapshotRepository, error) {
 
 	repo := &FileSnapshotRepository{path: path}
 	var err error
-	repo.data, err = loadJSONLFile[IncidentSnapshot](path)
+	repo.data, err = LoadJSONLFile[IncidentSnapshot](path)
 	if err != nil {
 		return nil, fmt.Errorf("load snapshots: %w", err)
 	}
@@ -47,7 +47,7 @@ func (r *FileSnapshotRepository) SaveSnapshots(incidentID string, snaps []Incide
 	for _, snap := range snaps {
 		snap.IncidentID = incidentID
 		r.data = append(r.data, snap)
-		if err := appendJSONLFile(r.path, snap); err != nil {
+		if err := AppendJSONLFile(r.path, snap); err != nil {
 			return fmt.Errorf("append snapshot: %w", err)
 		}
 	}
@@ -78,7 +78,7 @@ func (r *FileSnapshotRepository) PruneBefore(cutoff time.Time) error {
 		}
 	}
 	r.data = pruned
-	return rewriteJSONLFile(r.path, r.data)
+	return RewriteJSONLFile(r.path, r.data)
 }
 
 // MySQLEvidenceCollector captures evidence snapshots from MySQL on incident open.

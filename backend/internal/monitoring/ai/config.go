@@ -1,4 +1,4 @@
-package monitoring
+package ai
 
 import (
 	"crypto/aes"

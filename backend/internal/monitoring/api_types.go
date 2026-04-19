@@ -3,6 +3,8 @@ package monitoring
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
 )
 
 // APIResponse is the standard envelope for all API responses
@@ -98,20 +100,33 @@ func sanitizeChecksForList(checks []CheckConfig) []CheckConfig {
 	return safe
 }
 
-// writeAPIResponse writes an APIResponse to the response writer
-func writeAPIResponse(w http.ResponseWriter, statusCode int, response APIResponse) {
+// WriteAPIResponse writes an APIResponse to the response writer
+func WriteAPIResponse(w http.ResponseWriter, statusCode int, response APIResponse) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	_ = json.NewEncoder(w).Encode(response)
 }
 
-// writeAPIError writes an error APIResponse
-func writeAPIError(w http.ResponseWriter, statusCode int, err error) {
-	writeAPIResponse(w, statusCode, APIResponse{
+// WriteAPIError writes an error APIResponse
+func WriteAPIError(w http.ResponseWriter, statusCode int, err error) {
+	WriteAPIResponse(w, statusCode, APIResponse{
 		Success: false,
 		Error: &APIError{
 			Code:    statusCode,
 			Message: err.Error(),
 		},
 	})
+}
+
+// QueryInt parses an integer query parameter with a fallback default.
+func QueryInt(r *http.Request, key string, fallback int) int {
+	raw := strings.TrimSpace(r.URL.Query().Get(key))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
 }

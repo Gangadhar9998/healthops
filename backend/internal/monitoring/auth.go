@@ -17,8 +17,8 @@ func basicAuthMiddleware(cfg AuthConfig, next http.Handler) http.Handler {
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isMutatingMethod(r.Method) && !isRequestAuthorized(cfg, r) {
-			requestAuth(w)
+		if isMutatingMethod(r.Method) && !IsRequestAuthorized(cfg, r) {
+			RequestAuth(w)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -34,7 +34,7 @@ func isMutatingMethod(method string) bool {
 	}
 }
 
-func isRequestAuthorized(cfg AuthConfig, r *http.Request) bool {
+func IsRequestAuthorized(cfg AuthConfig, r *http.Request) bool {
 	if !cfg.Enabled {
 		return true
 	}
@@ -52,8 +52,8 @@ func isRequestAuthorized(cfg AuthConfig, r *http.Request) bool {
 	return usernameMatch && passwordMatch
 }
 
-// requestAuth sends a 401 Unauthorized response with WWW-Authenticate header.
-func requestAuth(w http.ResponseWriter) {
+// RequestAuth sends a 401 Unauthorized response with WWW-Authenticate header.
+func RequestAuth(w http.ResponseWriter) {
 	w.Header().Set("WWW-Authenticate", `Basic realm="HealthOps"`)
 	w.WriteHeader(http.StatusUnauthorized)
 	w.Write([]byte("Unauthorized\n"))

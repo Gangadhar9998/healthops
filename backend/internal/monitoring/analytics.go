@@ -277,7 +277,7 @@ func percentile(sorted []int64, pct float64) float64 {
 // GET /api/v1/analytics/uptime?checkId=&period=24h|7d|30d|90d
 func (s *Service) handleAnalyticsUptime(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeAPIError(w, http.StatusMethodNotAllowed, http.ErrNotSupported)
+		WriteAPIError(w, http.StatusMethodNotAllowed, http.ErrNotSupported)
 		return
 	}
 
@@ -291,7 +291,7 @@ func (s *Service) handleAnalyticsUptime(w http.ResponseWriter, r *http.Request) 
 	if checkID != "" {
 		stats := computeUptime(snap.Results, checkID, dur)
 		stats.Period = label
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(stats))
+		WriteAPIResponse(w, http.StatusOK, NewAPIResponse(stats))
 		return
 	}
 
@@ -307,14 +307,14 @@ func (s *Service) handleAnalyticsUptime(w http.ResponseWriter, r *http.Request) 
 	if all == nil {
 		all = []UptimeStats{}
 	}
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(all))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(all))
 }
 
 // handleAnalyticsResponseTimes returns response-time buckets for charting.
 // GET /api/v1/analytics/response-times?checkId=&period=24h|7d&interval=1h|6h|1d
 func (s *Service) handleAnalyticsResponseTimes(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeAPIError(w, http.StatusMethodNotAllowed, http.ErrNotSupported)
+		WriteAPIError(w, http.StatusMethodNotAllowed, http.ErrNotSupported)
 		return
 	}
 
@@ -328,20 +328,20 @@ func (s *Service) handleAnalyticsResponseTimes(w http.ResponseWriter, r *http.Re
 
 	snap := s.store.Snapshot()
 	buckets := computeResponseTimeBuckets(snap.Results, checkID, dur, intv)
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(buckets))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(buckets))
 }
 
 // handleAnalyticsStatusTimeline returns chronological status entries for a check.
 // GET /api/v1/analytics/status-timeline?checkId=&days=7
 func (s *Service) handleAnalyticsStatusTimeline(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeAPIError(w, http.StatusMethodNotAllowed, http.ErrNotSupported)
+		WriteAPIError(w, http.StatusMethodNotAllowed, http.ErrNotSupported)
 		return
 	}
 
 	checkID := strings.TrimSpace(r.URL.Query().Get("checkId"))
 
-	days := queryInt(r, "days", 7)
+	days := QueryInt(r, "days", 7)
 	cutoff := time.Now().UTC().Add(-time.Duration(days) * 24 * time.Hour)
 
 	snap := s.store.Snapshot()
@@ -368,14 +368,14 @@ func (s *Service) handleAnalyticsStatusTimeline(w http.ResponseWriter, r *http.R
 	if timeline == nil {
 		timeline = []StatusTimelineEntry{}
 	}
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(timeline))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(timeline))
 }
 
 // handleAnalyticsFailureRate returns failure rates grouped by server, application, or type.
 // GET /api/v1/analytics/failure-rate?period=24h|7d|30d&groupBy=server|application|type
 func (s *Service) handleAnalyticsFailureRate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeAPIError(w, http.StatusMethodNotAllowed, http.ErrNotSupported)
+		WriteAPIError(w, http.StatusMethodNotAllowed, http.ErrNotSupported)
 		return
 	}
 
@@ -438,14 +438,14 @@ func (s *Service) handleAnalyticsFailureRate(w http.ResponseWriter, r *http.Requ
 
 	sort.Slice(entries, func(i, j int) bool { return entries[i].FailureRate > entries[j].FailureRate })
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(entries))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(entries))
 }
 
 // handleAnalyticsMTTR returns incident statistics including MTTA and MTTR.
 // GET /api/v1/analytics/incidents
 func (s *Service) handleAnalyticsMTTR(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeAPIError(w, http.StatusMethodNotAllowed, http.ErrNotSupported)
+		WriteAPIError(w, http.StatusMethodNotAllowed, http.ErrNotSupported)
 		return
 	}
 
@@ -454,13 +454,13 @@ func (s *Service) handleAnalyticsMTTR(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.incidentManager == nil || s.incidentManager.repo == nil {
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(stats))
+		WriteAPIResponse(w, http.StatusOK, NewAPIResponse(stats))
 		return
 	}
 
 	incidents, err := s.incidentManager.repo.ListIncidents()
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err)
+		WriteAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -500,14 +500,14 @@ func (s *Service) handleAnalyticsMTTR(w http.ResponseWriter, r *http.Request) {
 		stats.MTTRMinutes = math.Round(totalTTRMin/float64(resolveCount)*100) / 100
 	}
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(stats))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(stats))
 }
 
 // handleStatsOverview returns a single payload for dashboard hero cards.
 // GET /api/v1/stats/overview
 func (s *Service) handleStatsOverview(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeAPIError(w, http.StatusMethodNotAllowed, http.ErrNotSupported)
+		WriteAPIError(w, http.StatusMethodNotAllowed, http.ErrNotSupported)
 		return
 	}
 
@@ -568,14 +568,14 @@ func (s *Service) handleStatsOverview(w http.ResponseWriter, r *http.Request) {
 		overview.AvgUptimePct = math.Round(uptimeSum/float64(uptimeCount)*100) / 100
 	}
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(overview))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(overview))
 }
 
 // handleGetCheck returns a rich CheckDetail for a single check.
 // Designed for GET /api/v1/checks/{id}
 func (s *Service) handleGetCheck(w http.ResponseWriter, r *http.Request, checkID string) {
 	if r.Method != http.MethodGet {
-		writeAPIError(w, http.StatusMethodNotAllowed, http.ErrNotSupported)
+		WriteAPIError(w, http.StatusMethodNotAllowed, http.ErrNotSupported)
 		return
 	}
 
@@ -590,7 +590,7 @@ func (s *Service) handleGetCheck(w http.ResponseWriter, r *http.Request, checkID
 		}
 	}
 	if found == nil {
-		writeAPIError(w, http.StatusNotFound, errCheckNotFound)
+		WriteAPIError(w, http.StatusNotFound, errCheckNotFound)
 		return
 	}
 
@@ -637,7 +637,7 @@ func (s *Service) handleGetCheck(w http.ResponseWriter, r *http.Request, checkID
 		}
 	}
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(detail))
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(detail))
 }
 
 // ---------------------------------------------------------------------------

@@ -1,14 +1,16 @@
-package monitoring
+package mysql
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"medics-health-check/backend/internal/monitoring"
 )
 
-func makeSample(checkID, sampleID string, ts time.Time) MySQLSample {
-	return MySQLSample{
+func makeSample(checkID, sampleID string, ts time.Time) monitoring.MySQLSample {
+	return monitoring.MySQLSample{
 		SampleID:       sampleID,
 		CheckID:        checkID,
 		Timestamp:      ts,
@@ -72,7 +74,7 @@ func TestFileMySQLRepository_AutoGeneratesSampleID(t *testing.T) {
 		t.Fatalf("create repo: %v", err)
 	}
 
-	s := MySQLSample{
+	s := monitoring.MySQLSample{
 		CheckID:   "mysql-1",
 		Timestamp: time.Now().UTC(),
 	}
@@ -128,13 +130,13 @@ func TestFileMySQLRepository_ComputeAndAppendDelta(t *testing.T) {
 	}
 
 	now := time.Now().UTC()
-	s1 := MySQLSample{
+	s1 := monitoring.MySQLSample{
 		SampleID:  "s1",
 		CheckID:   "mysql-1",
 		Timestamp: now.Add(-15 * time.Second),
 		Questions: 1000,
 	}
-	s2 := MySQLSample{
+	s2 := monitoring.MySQLSample{
 		SampleID:  "s2",
 		CheckID:   "mysql-1",
 		Timestamp: now,
@@ -182,7 +184,7 @@ func TestFileMySQLRepository_ComputeDeltaNoPrevious(t *testing.T) {
 		t.Fatalf("create repo: %v", err)
 	}
 
-	s := MySQLSample{SampleID: "s1", CheckID: "mysql-1", Timestamp: time.Now().UTC()}
+	s := monitoring.MySQLSample{SampleID: "s1", CheckID: "mysql-1", Timestamp: time.Now().UTC()}
 	_, _ = repo.AppendSample(s)
 
 	_, err = repo.ComputeAndAppendDelta("s1")
@@ -199,8 +201,8 @@ func TestFileMySQLRepository_PruneBefore(t *testing.T) {
 	}
 
 	now := time.Now().UTC()
-	old := MySQLSample{SampleID: "old", CheckID: "mysql-1", Timestamp: now.Add(-48 * time.Hour)}
-	recent := MySQLSample{SampleID: "recent", CheckID: "mysql-1", Timestamp: now}
+	old := monitoring.MySQLSample{SampleID: "old", CheckID: "mysql-1", Timestamp: now.Add(-48 * time.Hour)}
+	recent := monitoring.MySQLSample{SampleID: "recent", CheckID: "mysql-1", Timestamp: now}
 
 	_, _ = repo.AppendSample(old)
 	_, _ = repo.AppendSample(recent)
@@ -264,7 +266,7 @@ func TestFileMySQLRepository_RecentSamplesDefaultLimit(t *testing.T) {
 
 	now := time.Now().UTC()
 	for i := 0; i < 25; i++ {
-		s := MySQLSample{CheckID: "mysql-1", Timestamp: now.Add(time.Duration(i) * time.Second)}
+		s := monitoring.MySQLSample{CheckID: "mysql-1", Timestamp: now.Add(time.Duration(i) * time.Second)}
 		_, _ = repo.AppendSample(s)
 	}
 

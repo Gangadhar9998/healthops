@@ -1,4 +1,4 @@
-package monitoring
+package notify
 
 import (
 	"fmt"
@@ -6,13 +6,15 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"medics-health-check/backend/internal/monitoring"
 )
 
 // NotificationOutboxRepository defines generic notification queue operations.
 // This is reusable across all check types, not MySQL-specific.
 type NotificationOutboxRepository interface {
-	Enqueue(evt NotificationEvent) error
-	ListPending(limit int) ([]NotificationEvent, error)
+	Enqueue(evt monitoring.NotificationEvent) error
+	ListPending(limit int) ([]monitoring.NotificationEvent, error)
 	MarkSent(id string) error
 	MarkFailed(id string, reason string) error
 	PruneBefore(cutoff time.Time) error
@@ -22,7 +24,7 @@ type NotificationOutboxRepository interface {
 type FileNotificationOutbox struct {
 	mu   sync.RWMutex
 	path string
-	data []NotificationEvent
+	data []monitoring.NotificationEvent
 }
 
 // NewFileNotificationOutbox creates a file-backed notification outbox.
@@ -33,14 +35,14 @@ func NewFileNotificationOutbox(path string) (*FileNotificationOutbox, error) {
 
 	outbox := &FileNotificationOutbox{path: path}
 	var err error
-	outbox.data, err = loadJSONLFile[NotificationEvent](path)
+	outbox.data, err = monitoring.LoadJSONLFile[monitoring.NotificationEvent](path)
 	if err != nil {
 		return nil, fmt.Errorf("load outbox: %w", err)
 	}
 	return outbox, nil
 }
 
-func (o *FileNotificationOutbox) Enqueue(evt NotificationEvent) error {
+func (o *FileNotificationOutbox) Enqueue(evt monitoring.NotificationEvent) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
@@ -55,10 +57,10 @@ func (o *FileNotificationOutbox) Enqueue(evt NotificationEvent) error {
 	}
 
 	o.data = append(o.data, evt)
-	return appendJSONLFile(o.path, evt)
+	return monitoring.AppendJSONLFile(o.path, evt)
 }
 
-func (o *FileNotificationOutbox) ListPending(limit int) ([]NotificationEvent, error) {
+func (o *FileNotificationOutbox) ListPending(limit int) ([]monitoring.NotificationEvent, error) {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 
@@ -66,7 +68,7 @@ func (o *FileNotificationOutbox) ListPending(limit int) ([]NotificationEvent, er
 		limit = 100
 	}
 
-	var result []NotificationEvent
+	var result []monitoring.NotificationEvent
 	for _, evt := range o.data {
 		if evt.Status == "pending" {
 			result = append(result, evt)
@@ -99,7 +101,7 @@ func (o *FileNotificationOutbox) MarkSent(id string) error {
 		return fmt.Errorf("notification not found: %s", id)
 	}
 
-	return rewriteJSONLFile(o.path, o.data)
+	return monitoring.RewriteJSONLFile(o.path, o.data)
 }
 
 func (o *FileNotificationOutbox) MarkFailed(id string, reason string) error {
@@ -120,7 +122,7 @@ func (o *FileNotificationOutbox) MarkFailed(id string, reason string) error {
 		return fmt.Errorf("notification not found: %s", id)
 	}
 
-	return rewriteJSONLFile(o.path, o.data)
+	return monitoring.RewriteJSONLFile(o.path, o.data)
 }
 
 func (o *FileNotificationOutbox) PruneBefore(cutoff time.Time) error {
@@ -134,18 +136,28 @@ func (o *FileNotificationOutbox) PruneBefore(cutoff time.Time) error {
 		}
 	}
 	o.data = pruned
-	return rewriteJSONLFile(o.path, o.data)
+	return monitoring.RewriteJSONLFile(o.path, o.data)
 }
 
 // EnqueueIncidentNotification is a helper that creates a notification event from an incident.
 // Generic — works for any incident type, not just MySQL.
-func EnqueueIncidentNotification(outbox NotificationOutboxRepository, incident Incident, channel string) error {
+func EnqueueIncidentNotification(outbox NotificationOutboxRepository, incident monitoring.Incident, channel string) error {
 	payload := fmt.Sprintf(`{"incidentId":%q,"checkId":%q,"checkName":%q,"severity":%q,"message":%q,"status":%q}`,
 		incident.ID, incident.CheckID, incident.CheckName, incident.Severity, incident.Message, incident.Status)
 
-	return outbox.Enqueue(NotificationEvent{
+	return outbox.Enqueue(monitoring.NotificationEvent{
 		IncidentID:  incident.ID,
 		Channel:     channel,
 		PayloadJSON: payload,
 	})
+}
+
+// AllNotifications returns a copy of all notification events.
+func (o *FileNotificationOutbox) AllNotifications() []monitoring.NotificationEvent {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+
+	out := make([]monitoring.NotificationEvent, len(o.data))
+	copy(out, o.data)
+	return out
 }

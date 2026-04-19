@@ -27,31 +27,31 @@ func sanitizeServersForAPI(servers []RemoteServer) []RemoteServer {
 func (s *Service) handleServers(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(sanitizeServersForAPI(s.cfg.Servers)))
+		WriteAPIResponse(w, http.StatusOK, NewAPIResponse(sanitizeServersForAPI(s.cfg.Servers)))
 
 	case http.MethodPost:
-		if !isRequestAuthorized(s.cfg.Auth, r) {
-			requestAuth(w)
+		if !IsRequestAuthorized(s.cfg.Auth, r) {
+			RequestAuth(w)
 			return
 		}
 		var srv RemoteServer
 		if err := json.NewDecoder(r.Body).Decode(&srv); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 		srv.applyDefaults()
 		if srv.ID == "" {
-			writeAPIError(w, http.StatusBadRequest, fmt.Errorf("id is required"))
+			WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("id is required"))
 			return
 		}
 		if err := srv.validate(); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 		// Check for duplicates
 		for _, existing := range s.cfg.Servers {
 			if existing.ID == srv.ID {
-				writeAPIError(w, http.StatusConflict, fmt.Errorf("server %q already exists", srv.ID))
+				WriteAPIError(w, http.StatusConflict, fmt.Errorf("server %q already exists", srv.ID))
 				return
 			}
 		}
@@ -65,7 +65,7 @@ func (s *Service) handleServers(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
-		writeAPIResponse(w, http.StatusCreated, NewAPIResponse(sanitizeServerForAPI(srv)))
+		WriteAPIResponse(w, http.StatusCreated, NewAPIResponse(sanitizeServerForAPI(srv)))
 
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -75,7 +75,7 @@ func (s *Service) handleServers(w http.ResponseWriter, r *http.Request) {
 func (s *Service) handleServerByID(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/servers/")
 	if path == "" {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("missing server id"))
+		WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("missing server id"))
 		return
 	}
 
@@ -91,26 +91,26 @@ func (s *Service) handleServerByID(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		for _, srv := range s.cfg.Servers {
 			if srv.ID == id {
-				writeAPIResponse(w, http.StatusOK, NewAPIResponse(sanitizeServerForAPI(srv)))
+				WriteAPIResponse(w, http.StatusOK, NewAPIResponse(sanitizeServerForAPI(srv)))
 				return
 			}
 		}
-		writeAPIError(w, http.StatusNotFound, fmt.Errorf("server %q not found", id))
+		WriteAPIError(w, http.StatusNotFound, fmt.Errorf("server %q not found", id))
 
 	case http.MethodPut, http.MethodPatch:
-		if !isRequestAuthorized(s.cfg.Auth, r) {
-			requestAuth(w)
+		if !IsRequestAuthorized(s.cfg.Auth, r) {
+			RequestAuth(w)
 			return
 		}
 		var srv RemoteServer
 		if err := json.NewDecoder(r.Body).Decode(&srv); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 		srv.ID = id
 		srv.applyDefaults()
 		if err := srv.validate(); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err)
+			WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
 
@@ -127,7 +127,7 @@ func (s *Service) handleServerByID(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if !found {
-			writeAPIError(w, http.StatusNotFound, fmt.Errorf("server %q not found", id))
+			WriteAPIError(w, http.StatusNotFound, fmt.Errorf("server %q not found", id))
 			return
 		}
 
@@ -139,18 +139,18 @@ func (s *Service) handleServerByID(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(sanitizeServerForAPI(srv)))
+		WriteAPIResponse(w, http.StatusOK, NewAPIResponse(sanitizeServerForAPI(srv)))
 
 	case http.MethodDelete:
-		if !isRequestAuthorized(s.cfg.Auth, r) {
-			requestAuth(w)
+		if !IsRequestAuthorized(s.cfg.Auth, r) {
+			RequestAuth(w)
 			return
 		}
 
 		// Check if any checks reference this server
 		for _, check := range s.cfg.Checks {
 			if check.ServerId == id {
-				writeAPIError(w, http.StatusConflict, fmt.Errorf("cannot delete server %q: check %q references it", id, check.ID))
+				WriteAPIError(w, http.StatusConflict, fmt.Errorf("cannot delete server %q: check %q references it", id, check.ID))
 				return
 			}
 		}
@@ -165,7 +165,7 @@ func (s *Service) handleServerByID(w http.ResponseWriter, r *http.Request) {
 			filtered = append(filtered, srv)
 		}
 		if !found {
-			writeAPIError(w, http.StatusNotFound, fmt.Errorf("server %q not found", id))
+			WriteAPIError(w, http.StatusNotFound, fmt.Errorf("server %q not found", id))
 			return
 		}
 		s.cfg.Servers = filtered
@@ -188,15 +188,15 @@ func (s *Service) handleServerTest(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	if !isRequestAuthorized(s.cfg.Auth, r) {
-		requestAuth(w)
+	if !IsRequestAuthorized(s.cfg.Auth, r) {
+		RequestAuth(w)
 		return
 	}
 
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/servers/")
 	id = strings.TrimSuffix(id, "/test")
 	if id == "" {
-		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("missing server id"))
+		WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("missing server id"))
 		return
 	}
 
@@ -208,20 +208,20 @@ func (s *Service) handleServerTest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if srv == nil {
-		writeAPIError(w, http.StatusNotFound, fmt.Errorf("server %q not found", id))
+		WriteAPIError(w, http.StatusNotFound, fmt.Errorf("server %q not found", id))
 		return
 	}
 
 	output, err := sshDialAndRun(srv.ToSSHConfig(), "echo 'SSH OK' && hostname", 10*time.Second)
 	if err != nil {
-		writeAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]interface{}{
+		WriteAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]interface{}{
 			"success": false,
 			"error":   err.Error(),
 		}))
 		return
 	}
 
-	writeAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]interface{}{
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]interface{}{
 		"success": true,
 		"output":  strings.TrimSpace(string(output)),
 	}))

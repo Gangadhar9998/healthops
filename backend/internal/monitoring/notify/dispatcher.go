@@ -1,4 +1,4 @@
-package monitoring
+package notify
 
 import (
 	"bytes"
@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"medics-health-check/backend/internal/monitoring"
 )
 
 // NotificationPayload is the structured data sent to channels.
@@ -61,7 +63,7 @@ func NewNotificationDispatcher(
 
 // NotifyIncident evaluates all channels and sends notifications for matching ones.
 // checkResult is optional — when available, provides extra filter context (server, type, tags).
-func (d *NotificationDispatcher) NotifyIncident(incident Incident, checkResult *CheckResult) {
+func (d *NotificationDispatcher) NotifyIncident(incident monitoring.Incident, checkResult *monitoring.CheckResult) {
 	channels := d.channelStore.ListRaw()
 	if len(channels) == 0 {
 		return
@@ -88,7 +90,7 @@ func (d *NotificationDispatcher) NotifyIncident(incident Incident, checkResult *
 }
 
 // NotifyResolved sends resolution notifications to channels with notifyOnResolve enabled.
-func (d *NotificationDispatcher) NotifyResolved(incident Incident, checkResult *CheckResult) {
+func (d *NotificationDispatcher) NotifyResolved(incident monitoring.Incident, checkResult *monitoring.CheckResult) {
 	channels := d.channelStore.ListRaw()
 
 	payload := buildPayload(incident, "resolved")
@@ -108,7 +110,7 @@ func (d *NotificationDispatcher) NotifyResolved(incident Incident, checkResult *
 }
 
 // matchesFilters checks if an incident matches a channel's smart filters.
-func (d *NotificationDispatcher) matchesFilters(ch NotificationChannelConfig, incident Incident, result *CheckResult) bool {
+func (d *NotificationDispatcher) matchesFilters(ch NotificationChannelConfig, incident monitoring.Incident, result *monitoring.CheckResult) bool {
 	// Severity filter
 	if len(ch.Severities) > 0 && !containsStr(ch.Severities, incident.Severity) {
 		return false
@@ -210,7 +212,7 @@ func (d *NotificationDispatcher) sendToChannel(ch NotificationChannelConfig, pay
 	// Record in outbox for audit trail
 	if d.outbox != nil {
 		payloadJSON, _ := json.Marshal(payload)
-		evt := NotificationEvent{
+		evt := monitoring.NotificationEvent{
 			IncidentID:  incidentID,
 			Channel:     fmt.Sprintf("%s:%s", ch.Type, ch.Name),
 			PayloadJSON: string(payloadJSON),
@@ -446,7 +448,7 @@ func (d *NotificationDispatcher) postJSON(url string, body interface{}, headers 
 	return nil
 }
 
-func buildPayload(incident Incident, status string) NotificationPayload {
+func buildPayload(incident monitoring.Incident, status string) NotificationPayload {
 	return NotificationPayload{
 		IncidentID: incident.ID,
 		CheckID:    incident.CheckID,

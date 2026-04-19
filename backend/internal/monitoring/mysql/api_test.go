@@ -1,14 +1,42 @@
-package monitoring
+package mysql
 
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"medics-health-check/backend/internal/monitoring"
+	"medics-health-check/backend/internal/monitoring/ai"
+	"medics-health-check/backend/internal/monitoring/notify"
 )
+
+// decodeAPIResponse unmarshals an APIResponse envelope.
+func decodeAPIResponse(body []byte) (monitoring.APIResponse, error) {
+	var resp monitoring.APIResponse
+	err := json.Unmarshal(body, &resp)
+	return resp, err
+}
+
+// decodeAPIResponseData unmarshals the Data field of an APIResponse into v.
+func decodeAPIResponseData(body []byte, v interface{}) error {
+	var resp monitoring.APIResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return err
+	}
+	if !resp.Success {
+		return fmt.Errorf("API response indicates failure")
+	}
+	dataBytes, err := json.Marshal(resp.Data)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(dataBytes, v)
+}
 
 func newTestMySQLAPIHandler(t *testing.T) (*MySQLAPIHandler, *FileMySQLRepository) {
 	t.Helper()
@@ -19,23 +47,23 @@ func newTestMySQLAPIHandler(t *testing.T) (*MySQLAPIHandler, *FileMySQLRepositor
 		t.Fatalf("create mysql repo: %v", err)
 	}
 
-	snapshotRepo, err := NewFileSnapshotRepository(filepath.Join(dir, "snapshots.jsonl"))
+	snapshotRepo, err := monitoring.NewFileSnapshotRepository(filepath.Join(dir, "snapshots.jsonl"))
 	if err != nil {
 		t.Fatalf("create snapshot repo: %v", err)
 	}
 
-	outbox, err := NewFileNotificationOutbox(filepath.Join(dir, "outbox.jsonl"))
+	outbox, err := notify.NewFileNotificationOutbox(filepath.Join(dir, "outbox.jsonl"))
 	if err != nil {
 		t.Fatalf("create outbox: %v", err)
 	}
 
-	aiQueue, err := NewFileAIQueue(dir)
+	aiQueue, err := ai.NewFileAIQueue(dir)
 	if err != nil {
 		t.Fatalf("create ai queue: %v", err)
 	}
 
-	cfg := &Config{
-		Auth: AuthConfig{Enabled: true, Username: "admin", Password: "secret"},
+	cfg := &monitoring.Config{
+		Auth: monitoring.AuthConfig{Enabled: true, Username: "admin", Password: "secret"},
 	}
 
 	handler := NewMySQLAPIHandler(mysqlRepo, snapshotRepo, outbox, aiQueue, nil, cfg)
@@ -46,7 +74,7 @@ func TestMySQLSamplesEndpoint_GET(t *testing.T) {
 	handler, repo := newTestMySQLAPIHandler(t)
 
 	now := time.Now().UTC()
-	_, _ = repo.AppendSample(MySQLSample{
+	_, _ = repo.AppendSample(monitoring.MySQLSample{
 		SampleID: "s1", CheckID: "mysql-1", Timestamp: now,
 		Connections: 50, MaxConnections: 100,
 	})
@@ -59,7 +87,7 @@ func TestMySQLSamplesEndpoint_GET(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	var resp APIResponse
+	var resp monitoring.APIResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -96,11 +124,11 @@ func TestMySQLDeltasEndpoint_GET(t *testing.T) {
 	handler, repo := newTestMySQLAPIHandler(t)
 
 	now := time.Now().UTC()
-	_, _ = repo.AppendSample(MySQLSample{
+	_, _ = repo.AppendSample(monitoring.MySQLSample{
 		SampleID: "s1", CheckID: "mysql-1", Timestamp: now.Add(-15 * time.Second),
 		Questions: 1000,
 	})
-	_, _ = repo.AppendSample(MySQLSample{
+	_, _ = repo.AppendSample(monitoring.MySQLSample{
 		SampleID: "s2", CheckID: "mysql-1", Timestamp: now,
 		Questions: 1150,
 	})
@@ -114,7 +142,7 @@ func TestMySQLDeltasEndpoint_GET(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	var resp APIResponse
+	var resp monitoring.APIResponse
 	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 	if !resp.Success {
 		t.Fatal("expected success")
@@ -137,8 +165,8 @@ func TestIncidentSnapshotsEndpoint_GET(t *testing.T) {
 	handler, _ := newTestMySQLAPIHandler(t)
 
 	// Save some snapshots via the underlying repo
-	snapshotRepo := handler.snapshotRepo.(*FileSnapshotRepository)
-	_ = snapshotRepo.SaveSnapshots("inc-1", []IncidentSnapshot{
+	snapshotRepo := handler.snapshotRepo.(*monitoring.FileSnapshotRepository)
+	_ = snapshotRepo.SaveSnapshots("inc-1", []monitoring.IncidentSnapshot{
 		{SnapshotType: "latest_sample", Timestamp: time.Now().UTC(), PayloadJSON: `{"test":1}`},
 	})
 
@@ -155,8 +183,8 @@ func TestNotificationsEndpoint_GET(t *testing.T) {
 	handler, _ := newTestMySQLAPIHandler(t)
 
 	// Enqueue a notification
-	outbox := handler.outbox.(*FileNotificationOutbox)
-	_ = outbox.Enqueue(NotificationEvent{
+	outbox := handler.outbox.(*notify.FileNotificationOutbox)
+	_ = outbox.Enqueue(monitoring.NotificationEvent{
 		NotificationID: "notif-1",
 		IncidentID:     "inc-1",
 		Channel:        "slack",
@@ -170,7 +198,7 @@ func TestNotificationsEndpoint_GET(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	var resp APIResponse
+	var resp monitoring.APIResponse
 	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 	if !resp.Success {
 		t.Fatal("expected success")
@@ -193,8 +221,8 @@ func TestNotificationSentEndpoint_WithAuth(t *testing.T) {
 	handler, _ := newTestMySQLAPIHandler(t)
 
 	// Enqueue first
-	outbox := handler.outbox.(*FileNotificationOutbox)
-	_ = outbox.Enqueue(NotificationEvent{
+	outbox := handler.outbox.(*notify.FileNotificationOutbox)
+	_ = outbox.Enqueue(monitoring.NotificationEvent{
 		NotificationID: "notif-1",
 		IncidentID:     "inc-1",
 		Channel:        "slack",
@@ -213,8 +241,8 @@ func TestNotificationSentEndpoint_WithAuth(t *testing.T) {
 func TestNotificationFailedEndpoint_WithAuth(t *testing.T) {
 	handler, _ := newTestMySQLAPIHandler(t)
 
-	outbox := handler.outbox.(*FileNotificationOutbox)
-	_ = outbox.Enqueue(NotificationEvent{
+	outbox := handler.outbox.(*notify.FileNotificationOutbox)
+	_ = outbox.Enqueue(monitoring.NotificationEvent{
 		NotificationID: "notif-1",
 		IncidentID:     "inc-1",
 		Channel:        "slack",
@@ -346,7 +374,7 @@ func TestMySQLEndpointsFollowEnvelopeContract(t *testing.T) {
 	handler, repo := newTestMySQLAPIHandler(t)
 
 	now := time.Now().UTC()
-	_, _ = repo.AppendSample(MySQLSample{
+	_, _ = repo.AppendSample(monitoring.MySQLSample{
 		SampleID: "s1", CheckID: "mysql-1", Timestamp: now,
 	})
 
@@ -372,7 +400,7 @@ func TestMySQLEndpointsFollowEnvelopeContract(t *testing.T) {
 				t.Fatalf("expected 200, got %d", rec.Code)
 			}
 
-			var resp APIResponse
+			var resp monitoring.APIResponse
 			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 				t.Fatalf("decode envelope: %v", err)
 			}

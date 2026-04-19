@@ -1,4 +1,4 @@
-package monitoring
+package ai
 
 import (
 	"fmt"
@@ -6,14 +6,16 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"medics-health-check/backend/internal/monitoring"
 )
 
 // AIQueueRepository defines generic AI analysis queue operations.
 // Reusable across all check types, not MySQL-specific.
 type AIQueueRepository interface {
 	Enqueue(incidentID string, promptVersion string) error
-	ClaimPending(limit int) ([]AIQueueItem, error)
-	Complete(incidentID string, result AIAnalysisResult) error
+	ClaimPending(limit int) ([]monitoring.AIQueueItem, error)
+	Complete(incidentID string, result monitoring.AIAnalysisResult) error
 	Fail(incidentID string, reason string) error
 	PruneBefore(cutoff time.Time) error
 }
@@ -23,8 +25,8 @@ type FileAIQueue struct {
 	mu          sync.RWMutex
 	queuePath   string
 	resultsPath string
-	queue       []AIQueueItem
-	results     []AIAnalysisResult
+	queue       []monitoring.AIQueueItem
+	results     []monitoring.AIAnalysisResult
 }
 
 // NewFileAIQueue creates a file-backed AI queue.
@@ -42,12 +44,12 @@ func NewFileAIQueue(dataDir string) (*FileAIQueue, error) {
 	}
 
 	var err error
-	q.queue, err = loadJSONLFile[AIQueueItem](queuePath)
+	q.queue, err = monitoring.LoadJSONLFile[monitoring.AIQueueItem](queuePath)
 	if err != nil {
 		return nil, fmt.Errorf("load ai queue: %w", err)
 	}
 
-	q.results, err = loadJSONLFile[AIAnalysisResult](resultsPath)
+	q.results, err = monitoring.LoadJSONLFile[monitoring.AIAnalysisResult](resultsPath)
 	if err != nil {
 		return nil, fmt.Errorf("load ai results: %w", err)
 	}
@@ -66,7 +68,7 @@ func (q *FileAIQueue) Enqueue(incidentID string, promptVersion string) error {
 		}
 	}
 
-	item := AIQueueItem{
+	item := monitoring.AIQueueItem{
 		IncidentID:    incidentID,
 		PromptVersion: promptVersion,
 		Status:        "pending",
@@ -74,10 +76,10 @@ func (q *FileAIQueue) Enqueue(incidentID string, promptVersion string) error {
 	}
 
 	q.queue = append(q.queue, item)
-	return appendJSONLFile(q.queuePath, item)
+	return monitoring.AppendJSONLFile(q.queuePath, item)
 }
 
-func (q *FileAIQueue) ClaimPending(limit int) ([]AIQueueItem, error) {
+func (q *FileAIQueue) ClaimPending(limit int) ([]monitoring.AIQueueItem, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -85,7 +87,7 @@ func (q *FileAIQueue) ClaimPending(limit int) ([]AIQueueItem, error) {
 		limit = 10
 	}
 
-	var claimed []AIQueueItem
+	var claimed []monitoring.AIQueueItem
 	for i := range q.queue {
 		if q.queue[i].Status == "pending" {
 			now := time.Now().UTC()
@@ -99,7 +101,7 @@ func (q *FileAIQueue) ClaimPending(limit int) ([]AIQueueItem, error) {
 	}
 
 	if len(claimed) > 0 {
-		if err := rewriteJSONLFile(q.queuePath, q.queue); err != nil {
+		if err := monitoring.RewriteJSONLFile(q.queuePath, q.queue); err != nil {
 			return nil, fmt.Errorf("persist claimed items: %w", err)
 		}
 	}
@@ -107,7 +109,7 @@ func (q *FileAIQueue) ClaimPending(limit int) ([]AIQueueItem, error) {
 	return claimed, nil
 }
 
-func (q *FileAIQueue) Complete(incidentID string, result AIAnalysisResult) error {
+func (q *FileAIQueue) Complete(incidentID string, result monitoring.AIAnalysisResult) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -132,10 +134,10 @@ func (q *FileAIQueue) Complete(incidentID string, result AIAnalysisResult) error
 
 	q.results = append(q.results, result)
 
-	if err := rewriteJSONLFile(q.queuePath, q.queue); err != nil {
+	if err := monitoring.RewriteJSONLFile(q.queuePath, q.queue); err != nil {
 		return fmt.Errorf("persist queue: %w", err)
 	}
-	if err := appendJSONLFile(q.resultsPath, result); err != nil {
+	if err := monitoring.AppendJSONLFile(q.resultsPath, result); err != nil {
 		return fmt.Errorf("persist result: %w", err)
 	}
 	return nil
@@ -158,7 +160,7 @@ func (q *FileAIQueue) Fail(incidentID string, reason string) error {
 		return fmt.Errorf("no pending/processing AI queue item for incident %s", incidentID)
 	}
 
-	return rewriteJSONLFile(q.queuePath, q.queue)
+	return monitoring.RewriteJSONLFile(q.queuePath, q.queue)
 }
 
 func (q *FileAIQueue) PruneBefore(cutoff time.Time) error {
@@ -181,18 +183,18 @@ func (q *FileAIQueue) PruneBefore(cutoff time.Time) error {
 	}
 	q.results = prunedResults
 
-	if err := rewriteJSONLFile(q.queuePath, q.queue); err != nil {
+	if err := monitoring.RewriteJSONLFile(q.queuePath, q.queue); err != nil {
 		return err
 	}
-	return rewriteJSONLFile(q.resultsPath, q.results)
+	return monitoring.RewriteJSONLFile(q.resultsPath, q.results)
 }
 
 // GetResults returns AI analysis results for a specific incident.
-func (q *FileAIQueue) GetResults(incidentID string) []AIAnalysisResult {
+func (q *FileAIQueue) GetResults(incidentID string) []monitoring.AIAnalysisResult {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
-	var out []AIAnalysisResult
+	var out []monitoring.AIAnalysisResult
 	for _, r := range q.results {
 		if r.IncidentID == incidentID {
 			out = append(out, r)
@@ -202,7 +204,7 @@ func (q *FileAIQueue) GetResults(incidentID string) []AIAnalysisResult {
 }
 
 // AllResults returns all AI analysis results, most recent first, up to limit.
-func (q *FileAIQueue) AllResults(limit int) []AIAnalysisResult {
+func (q *FileAIQueue) AllResults(limit int) []monitoring.AIAnalysisResult {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
@@ -214,7 +216,7 @@ func (q *FileAIQueue) AllResults(limit int) []AIAnalysisResult {
 	if n > limit {
 		n = limit
 	}
-	out := make([]AIAnalysisResult, n)
+	out := make([]monitoring.AIAnalysisResult, n)
 	// Return in reverse order (most recent first)
 	for i := 0; i < n; i++ {
 		out[i] = q.results[len(q.results)-1-i]
@@ -223,7 +225,7 @@ func (q *FileAIQueue) AllResults(limit int) []AIAnalysisResult {
 }
 
 // ListPendingItems returns pending AI queue items (for API read access).
-func (q *FileAIQueue) ListPendingItems(limit int) ([]AIQueueItem, error) {
+func (q *FileAIQueue) ListPendingItems(limit int) ([]monitoring.AIQueueItem, error) {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
@@ -231,7 +233,7 @@ func (q *FileAIQueue) ListPendingItems(limit int) ([]AIQueueItem, error) {
 		limit = 100
 	}
 
-	var result []AIQueueItem
+	var result []monitoring.AIQueueItem
 	for _, item := range q.queue {
 		if item.Status == "pending" {
 			result = append(result, item)
@@ -241,4 +243,14 @@ func (q *FileAIQueue) ListPendingItems(limit int) ([]AIQueueItem, error) {
 		}
 	}
 	return result, nil
+}
+
+// AllItems returns a copy of all AI queue items.
+func (q *FileAIQueue) AllItems() []monitoring.AIQueueItem {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+
+	out := make([]monitoring.AIQueueItem, len(q.queue))
+	copy(out, q.queue)
+	return out
 }
