@@ -1,6 +1,6 @@
 # Docker Deployment
 
-This guide covers deploying the Medics Health Check service using Docker and Docker Compose.
+This guide covers deploying HealthOps using Docker and Docker Compose.
 
 ## Prerequisites
 
@@ -15,15 +15,31 @@ This guide covers deploying the Medics Health Check service using Docker and Doc
 docker build -t healthmon .
 ```
 
-### 2. Start the full stack
+### 2. Start the stack
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 This starts:
-- **healthmon** service on port 8080
+- **healthmon** service on port 8080 (Go backend + React frontend)
 - **MongoDB** on port 27017
+
+### 2b. (Optional) Start with demo services
+
+To try HealthOps with realistic monitoring targets (nginx, MySQL, Redis, echo server):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d
+```
+
+This adds:
+- **nginx** on port 8081 (web server with health endpoint)
+- **MySQL** on port 3306 (for MySQL deep monitoring)
+- **Redis** on port 6379 (cache, TCP check)
+- **echo-server** on port 9000 (simple API endpoint)
+
+All demo services come pre-configured with health checks in `backend/config/demo.json`.
 
 ### 3. View logs
 

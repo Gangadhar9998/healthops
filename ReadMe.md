@@ -1,223 +1,281 @@
 # HealthOps
 
-HealthOps is a backend-first monitoring and incident platform for infrastructure and application health checks.
+**Open-source infrastructure monitoring with a modern UI, AI-powered incident analysis, and MySQL deep monitoring.**
 
-It is designed for teams that need a practical internal reliability tool: fast to run, easy to configure, and stable under continuous checks.
+HealthOps is a single-binary Go backend + React frontend that monitors your servers, APIs, databases, and services — then alerts you when things go wrong and uses AI to help you fix them.
 
-## What This Project Actually Is
+![Dashboard](docs/screenshots/dashboard.png)
 
-HealthOps is a Go service that:
-- stores and schedules health checks
-- executes checks on a recurring interval
-- exposes health and monitoring APIs
-- evaluates alert rules
-- exposes Prometheus metrics
-- supports audit logging for mutating actions
+## Why HealthOps?
 
-This is not just a ping tool. It is an operational control-plane for service checks, health summaries, and incident-oriented monitoring workflows.
+- **Zero-config start** — Run one command, get a full monitoring dashboard at `localhost:8080`
+- **7 check types** — HTTP APIs, TCP ports, processes, commands, logs, MySQL databases, SSH remote servers
+- **AI incident analysis** — Bring your own key (OpenAI, Anthropic, Google, Ollama) to auto-analyze incidents
+- **Beautiful UI** — React + Tailwind dashboard with real-time SSE updates, charts, and dark mode
+- **Single binary** — No external dependencies required. Optional MongoDB mirror and MySQL monitoring
+- **62+ API endpoints** — Full REST API for automation and integration
+- **Production-ready** — Auth, audit logging, Prometheus metrics, retention cleanup, encrypted AI keys
 
-## What Is Great About It
+## Screenshots
 
-1. Operationally simple
-- Single backend service with file-first persistence
-- Optional MongoDB mirror, but local persistence remains the source of resilience
-- Easy local and Docker startup
+| Dashboard | Health Checks | Incidents |
+|-----------|--------------|-----------|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Checks](docs/screenshots/checks.png) | ![Incidents](docs/screenshots/incidents.png) |
 
-2. Built for production behavior, not demo behavior
-- Per-check scheduling (`interval`, `retry`, `retry delay`, `cooldown`)
-- Input validation and API envelope consistency
-- Auth gating for mutating APIs
-- Scheduler, API, and metrics paths are test-covered
+| Servers | Analytics | Settings |
+|---------|-----------|----------|
+| ![Servers](docs/screenshots/servers.png) | ![Analytics](docs/screenshots/analytics.png) | ![Settings](docs/screenshots/settings.png) |
 
-3. Good reliability ergonomics
-- Prometheus metrics endpoint (`/metrics`)
-- Dashboard-focused summary/read endpoints
-- Structured audit events
-- Load test suite for scheduler/query/memory scenarios
+| AI Analysis | MySQL Monitoring |
+|-------------|-----------------|
+| ![AI Analysis](docs/screenshots/ai-analysis.png) | ![MySQL](docs/screenshots/mysql.png) |
 
-4. Extensible without being overengineered
-- Clear module boundaries under `backend/internal/monitoring`
-- Domain types for checks/results/incidents/alerts/audit
-- Feature evolution documented in backend docs
+## Quick Start
 
-## Core Use Cases
+### Option 1: Run locally (Go + Node.js required)
 
-1. Service/API health monitoring
-- Check HTTP APIs for status and content
-- Track latency thresholds and warnings
+```bash
+# Build frontend
+cd frontend && npm install && npm run build && cd ..
 
-2. Network and host-level availability checks
-- TCP port reachability checks
-- Process presence checks
-- Log freshness heartbeat checks
+# Start the backend (serves frontend too)
+cd backend && FRONTEND_DIR=../frontend/dist go run ./cmd/healthmon
+```
 
-3. Reliability dashboards for operations
-- Aggregate health by server and application
-- Inspect latest results and retention-window history
+Open [http://localhost:8080](http://localhost:8080) — that's it.
 
-4. Incident operations (backend primitives)
-- Incident lifecycle model exists (open/acknowledge/resolve)
-- Audit trail support for check and incident mutations
+### Option 2: Docker Compose (recommended)
 
-5. Controlled migration away from DB-side MySQL monitoring pack
-- MySQL replacement plan is already specified in:
-  - `backend/docs/mysql-migration-spec.md`
+```bash
+docker compose up -d
+```
 
-## Current Capability Snapshot
+This starts HealthOps + MongoDB. Open [http://localhost:8080](http://localhost:8080).
 
-### Check types
-- `api`
-- `tcp`
-- `process`
-- `command` (disabled by default unless explicitly enabled in config)
-- `log`
+### Option 2b: Docker Compose with demo targets
 
-### Main API endpoints
-- `GET /healthz`
-- `GET /readyz`
-- `GET /api/v1/checks`
-- `POST /api/v1/checks`
-- `PUT /api/v1/checks/{id}`
-- `PATCH /api/v1/checks/{id}`
-- `DELETE /api/v1/checks/{id}`
-- `POST /api/v1/runs`
-- `GET /api/v1/summary`
-- `GET /api/v1/results`
-- `GET /api/v1/dashboard/checks`
-- `GET /api/v1/dashboard/summary`
-- `GET /api/v1/dashboard/results`
-- `GET /api/v1/incidents`
-- `GET /api/v1/incidents/{id}`
-- `POST /api/v1/incidents/{id}/acknowledge`
-- `POST /api/v1/incidents/{id}/resolve`
-- `GET /api/v1/audit`
-- `GET /metrics`
+Try HealthOps with realistic monitoring targets (nginx, MySQL, Redis, echo server) — all pre-configured:
 
-## High-Level Architecture
+```bash
+docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d
+```
 
-```text
-Checks config
-   -> Scheduler (per-check timers)
-      -> Runner (executes check by type)
-         -> Store (file, optional Mongo mirror)
-            -> Summary + dashboard API
-            -> Alert evaluation
-               -> Incident lifecycle
-                  -> Audit trail
+### Option 3: Docker only
 
-HTTP API
-   -> validation/auth middleware
-   -> envelope response contracts
+```bash
+docker build -t healthops .
+docker run -p 8080:8080 healthops
+```
 
-Prometheus endpoint
-   -> runtime/service metrics
+### Verify it's running
+
+```bash
+curl http://localhost:8080/healthz
+# {"success":true,"data":{"status":"ok"}}
+```
+
+## Features
+
+### Health Check Types
+
+| Type | What it monitors | Example |
+|------|-----------------|---------|
+| `api` | HTTP/HTTPS endpoints | REST APIs, health endpoints, websites |
+| `tcp` | Port connectivity | Database ports, service ports |
+| `process` | Running processes | nginx, node, postgres |
+| `command` | Shell command output | Custom scripts, disk checks |
+| `log` | Log file freshness | App logs, system logs |
+| `mysql` | MySQL database health | Connections, queries, replication |
+| `ssh` | Remote server checks | SSH-based remote monitoring |
+
+Each check supports: custom intervals, retries, cooldowns, timeout, and warning thresholds.
+
+### Incident Management
+
+- Auto-created incidents from configurable alert rules
+- Full lifecycle: **open → acknowledge → resolve**
+- Evidence snapshots captured at incident creation
+- MTTA/MTTR analytics
+
+### AI-Powered Analysis (BYOK)
+
+Bring your own API key from any provider:
+- **OpenAI** (GPT-4, GPT-3.5)
+- **Anthropic** (Claude)
+- **Google** (Gemini)
+- **Ollama** (local models)
+- **Custom** (any OpenAI-compatible API)
+
+AI auto-analyzes new incidents with configurable prompt templates. API keys are AES-256-GCM encrypted at rest.
+
+### MySQL Deep Monitoring
+
+- Live `SHOW GLOBAL STATUS/VARIABLES` collection
+- Delta computation for rate metrics
+- 9 built-in alert rules (connection utilization, slow queries, lock waits, replication lag, etc.)
+- Dedicated sub-pages: connections, queries, threads, server stats
+
+### Server Management
+
+- Add and manage remote servers
+- SSH-based health checks (process, command, connectivity)
+- Server grouping and tagging
+
+### Analytics & Observability
+
+- **Uptime tracking** per check with 7-day trends
+- **Response time charts** with percentile breakdowns
+- **Failure rate** analysis
+- **Prometheus metrics** at `/metrics` (check runs, failures, durations, HTTP requests)
+- **Audit logging** for all mutations
+- **SSE real-time events** for live dashboard updates
+- **CSV/JSON export** for incidents and results
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│                   React Frontend                     │
+│        (Vite + TypeScript + Tailwind + Recharts)     │
+└──────────────────────┬──────────────────────────────┘
+                       │ REST API + SSE
+┌──────────────────────┴──────────────────────────────┐
+│                   Go Backend                         │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────┐ │
+│  │Scheduler │ │ Runner   │ │ Incident │ │  AI    │ │
+│  │(per-check│ │(7 types) │ │ Manager  │ │Service │ │
+│  │ timers)  │ │          │ │          │ │(BYOK)  │ │
+│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └───┬────┘ │
+│       │             │            │            │      │
+│  ┌────┴─────────────┴────────────┴────────────┴───┐  │
+│  │              Hybrid Store                       │  │
+│  │    (File-based primary + optional MongoDB)      │  │
+│  └────────────────────────────────────────────────┘  │
+│                                                      │
+│  Auth · Validation · Audit · Prometheus · Alert Rules│
+└──────────────────────────────────────────────────────┘
 ```
 
 ## Project Layout
 
-- `backend/`: Go service and operational docs
-- `backend/cmd/healthmon`: runtime entrypoint
-- `backend/cmd/loadtest`: load/perf validation tool
-- `backend/internal/monitoring`: core monitoring, scheduling, API, rules, metrics, audit modules
-- `backend/config/default.json`: base check configuration
-- `backend/data/`: persisted runtime state
-- `frontend/`: reserved UI workspace
-- `docker-compose.yml`: local stack with backend + Mongo
+```
+healthops/
+├── backend/                  # Go backend service
+│   ├── cmd/healthmon/        # Main entrypoint
+│   ├── cmd/loadtest/         # Load testing tool
+│   ├── internal/monitoring/  # Core modules (50+ files)
+│   ├── config/default.json   # Default check configuration
+│   └── docs/                 # API reference, specs, runbook
+├── frontend/                 # React + TypeScript + Vite
+│   └── src/
+│       ├── pages/            # 11 pages + 4 MySQL sub-pages
+│       ├── components/       # Reusable UI components
+│       ├── api/              # API client modules
+│       └── hooks/            # SSE, export hooks
+├── docker/                   # Docker configs & MySQL init
+├── docs/                     # ADRs, runbook, plans
+├── docker-compose.yml        # Full stack: backend + Mongo + MySQL
+├── Dockerfile                # Multi-stage build (frontend + backend)
+└── ReadMe.md                 # This file
+```
 
-## Quick Start
+## Configuration
 
-### 1) Run locally
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CONFIG_PATH` | `config/default.json` | Check configuration file |
+| `STATE_PATH` | `data/state.json` | Persisted state file |
+| `DATA_DIR` | `data/` | Data directory for JSONL repos |
+| `FRONTEND_DIR` | — | Path to frontend dist folder |
+| `MONGODB_URI` | — | Optional MongoDB connection |
+| `MYSQL_DSN` | — | MySQL DSN for mysql checks |
+| `AUTH_ENABLED` | `false` | Enable HTTP Basic Auth |
+| `AUTH_USERNAME` | `admin` | Auth username |
+| `AUTH_PASSWORD` | — | Auth password |
+
+### Check Configuration
+
+Checks are defined in `backend/config/default.json`. Each check supports:
+
+```json
+{
+  "id": "my-api",
+  "name": "My API",
+  "type": "api",
+  "target": "https://api.example.com/healthz",
+  "intervalSeconds": 30,
+  "timeoutSeconds": 10,
+  "retryCount": 2,
+  "retryDelaySeconds": 5,
+  "cooldownSeconds": 60,
+  "warningThresholdMs": 500,
+  "server": "prod-server-1",
+  "tags": ["production", "critical"]
+}
+```
+
+## API Overview
+
+HealthOps exposes 62+ REST endpoints. Full reference: [`backend/docs/api-reference.md`](backend/docs/api-reference.md)
+
+**Core:** `/healthz`, `/readyz`, checks CRUD, manual runs, summary, results, dashboard
+
+**Incidents:** list, detail, acknowledge, resolve, evidence snapshots
+
+**MySQL:** samples, deltas, health card, time-series, AI questions
+
+**AI (BYOK):** config, providers, prompts, analyze, health check, results queue
+
+**More:** alert rules, analytics (uptime/response-times/failure-rate/incidents), audit log, SSE events, Prometheus metrics, CSV exports
+
+## Testing
 
 ```bash
 cd backend
-go run ./cmd/healthmon
+go test ./...           # All tests
+go test ./... -race     # With race detector
+go fmt ./...            # Format check
 ```
 
-### 2) Verify service
-
-```bash
-curl http://localhost:8080/healthz
-curl http://localhost:8080/api/v1/summary
-curl http://localhost:8080/api/v1/checks
-```
-
-### 3) Run tests
-
-```bash
-cd backend
-go test ./...
-```
-
-### 4) Run load tests
+Load testing:
 
 ```bash
 cd backend
 go run ./cmd/loadtest -scenario=query -duration=2m
 ```
 
-## Configuration
+## Security
 
-Primary runtime config is JSON-based (`backend/config/default.json`).
+- HTTP Basic Auth for mutating endpoints (optional, enable in config)
+- Command checks disabled by default (`allowCommandChecks=false`)
+- AI API keys AES-256-GCM encrypted at rest
+- Input validation on all API endpoints
+- Secrets in env vars, never in config files
 
-Important points:
-- per-check scheduling is configured at check level
-- command checks are blocked unless `allowCommandChecks=true`
-- default persistence is local file state
-- MongoDB mirror is enabled only when `MONGODB_URI` is provided
+## Tech Stack
 
-Common runtime env vars:
-- `CONFIG_PATH`
-- `STATE_PATH`
-- `MONGODB_URI`
-- `MONGODB_DATABASE`
-- `MONGODB_COLLECTION_PREFIX`
+| Layer | Technology |
+|-------|-----------|
+| Backend | Go 1.23, `net/http` stdlib |
+| Frontend | React 19, TypeScript, Vite 6, Tailwind CSS |
+| Charts | Recharts |
+| State | TanStack React Query |
+| Storage | File-based (primary) + MongoDB (optional mirror) |
+| Monitoring | Prometheus client, SSE |
+| Container | Docker multi-stage build |
 
-## Security & Safety Notes
+## Contributing
 
-- Mutating APIs require auth when auth is enabled in config
-- Request body and query guards are implemented for API hardening
-- Do not store secrets in config files
-- Keep `allowCommandChecks=false` unless strictly required in trusted environments
+1. Fork the repo
+2. Create a feature branch
+3. Run tests: `cd backend && go test ./...`
+4. Submit a PR
 
-## Deployment
+## License
 
-### Docker
-
-```bash
-docker build -t healthops .
-docker compose up -d
-```
-
-Service endpoints:
-- HealthOps API: `http://localhost:8080`
-- MongoDB: `mongodb://localhost:27017`
-
-## Quality and Verification
-
-HealthOps includes:
-- unit and contract tests across monitoring modules
-- e2e incident/auth/audit path tests
-- load testing for scheduler/query/memory behavior
-- release and security docs under `backend/docs/`
-
-Useful docs:
-- `backend/docs/release-checklist.md`
-- `backend/docs/security-audit.md`
-- `backend/docs/load-test-report.md`
-- `backend/docs/mysql-migration-spec.md`
-
-## Roadmap Direction
-
-Immediate roadmap focus:
-1. Replace external MySQL SQL-pack monitoring with native HealthOps MySQL module
-2. Keep communication and AI queueing generic (incident-centric), while data collection remains source-specific
-3. Maintain strong test gates before production cutovers
-
-## Who Should Use This
-
-Use HealthOps if you want:
-- an internal reliability backend you can own and extend
-- practical API-first monitoring with incident-friendly data
+Open source. See repository for details.
 - controlled migration from fragmented scripts/tools into one service
 
 Not ideal if you need:

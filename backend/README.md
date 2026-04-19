@@ -34,7 +34,8 @@ MongoDB is best-effort only. The backend keeps running with the local file store
 
 ## Key Features
 
-- **Health Checks**: `api`, `tcp`, `process`, `command`, `log`, `mysql` check types
+- **Health Checks**: `api`, `tcp`, `process`, `command`, `log`, `mysql`, `ssh` check types
+- **Server Management**: Add remote servers, SSH-based health checks for process/command/connectivity
 - **MySQL Monitoring**: Collects `SHOW GLOBAL STATUS/VARIABLES`, computes deltas, 9 default alert rules
 - **Incidents**: Auto-created from alert rules, acknowledge/resolve lifecycle, evidence snapshots
 - **Alert Rules**: Configurable thresholds, cooldowns, consecutive breaches, per-check or global

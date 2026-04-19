@@ -22,6 +22,7 @@ backend/data/
 *.png
 *.jpg
 *.jpeg
+!docs/screenshots/*.png
 
 # Playwright
 .playwright-mcp/

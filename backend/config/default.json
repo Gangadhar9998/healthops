@@ -9,18 +9,6 @@
   "checkIntervalSeconds": 30,
   "workers": 8,
   "allowCommandChecks": true,
-  "servers": [
-    {
-      "id": "hetzner-lms",
-      "name": "Hetzner VPS (lms)",
-      "host": "135.181.33.106",
-      "port": 22,
-      "user": "root",
-      "keyPath": "/app/.ssh/id_ed25519",
-      "tags": ["hetzner", "production"],
-      "enabled": true
-    }
-  ],
   "checks": [
     {
       "id": "self-health",
@@ -39,62 +27,6 @@
       "cooldownSeconds": 30,
       "enabled": true,
       "tags": ["api", "self", "critical"]
-    },
-    {
-      "id": "mongo-tcp",
-      "name": "MongoDB Connection",
-      "type": "tcp",
-      "server": "healthmon",
-      "application": "mongodb",
-      "host": "mongo",
-      "port": 27017,
-      "timeoutSeconds": 5,
-      "warningThresholdMs": 200,
-      "intervalSeconds": 30,
-      "retryCount": 2,
-      "retryDelaySeconds": 3,
-      "cooldownSeconds": 30,
-      "enabled": true,
-      "tags": ["tcp", "database", "critical"]
-    },
-    {
-      "id": "mysql-tcp",
-      "name": "MySQL Connection",
-      "type": "tcp",
-      "server": "healthmon",
-      "application": "mysql",
-      "host": "mysql",
-      "port": 3306,
-      "timeoutSeconds": 5,
-      "warningThresholdMs": 200,
-      "intervalSeconds": 30,
-      "retryCount": 2,
-      "retryDelaySeconds": 3,
-      "cooldownSeconds": 30,
-      "enabled": true,
-      "tags": ["tcp", "database"]
-    },
-    {
-      "id": "mysql-health",
-      "name": "MySQL Database Health",
-      "type": "mysql",
-      "server": "healthmon",
-      "application": "mysql",
-      "timeoutSeconds": 10,
-      "intervalSeconds": 30,
-      "retryCount": 1,
-      "retryDelaySeconds": 5,
-      "cooldownSeconds": 60,
-      "enabled": true,
-      "tags": ["mysql", "database", "critical"],
-      "mysql": {
-        "dsnEnv": "MYSQL_DSN",
-        "connectTimeoutSeconds": 3,
-        "queryTimeoutSeconds": 5,
-        "processlistLimit": 50,
-        "statementLimit": 20,
-        "hostUserLimit": 20
-      }
     },
     {
       "id": "healthmon-process",
@@ -133,79 +65,6 @@
       "intervalSeconds": 60,
       "enabled": true,
       "tags": ["command", "network"]
-    },
-    {
-      "id": "app-log",
-      "name": "Application Log",
-      "type": "log",
-      "server": "healthmon",
-      "application": "healthops",
-      "path": "/app/data/healthmon.log",
-      "freshnessSeconds": 120,
-      "timeoutSeconds": 5,
-      "intervalSeconds": 30,
-      "enabled": true,
-      "tags": ["logs", "self"]
-    },
-    {
-      "id": "hetzner-vps",
-      "name": "Hetzner VPS (lms)",
-      "type": "ssh",
-      "server": "lms",
-      "application": "system",
-      "timeoutSeconds": 15,
-      "intervalSeconds": 60,
-      "retryCount": 1,
-      "retryDelaySeconds": 5,
-      "cooldownSeconds": 60,
-      "enabled": true,
-      "tags": ["ssh", "server", "hetzner", "production"],
-      "ssh": {
-        "host": "135.181.33.106",
-        "port": 22,
-        "user": "root",
-        "keyPath": "/app/.ssh/id_ed25519"
-      }
-    },
-    {
-      "id": "hetzner-pm2-process",
-      "name": "Hetzner PM2 Process",
-      "type": "process",
-      "server": "lms",
-      "application": "cfm",
-      "serverId": "hetzner-lms",
-      "target": "pm2",
-      "timeoutSeconds": 10,
-      "intervalSeconds": 60,
-      "enabled": true,
-      "tags": ["process", "hetzner", "remote"]
-    },
-    {
-      "id": "hetzner-disk-space",
-      "name": "Hetzner Disk Space",
-      "type": "command",
-      "server": "lms",
-      "application": "system",
-      "serverId": "hetzner-lms",
-      "command": "df -h / | tail -1 | awk '{print $5}' | sed 's/%//'",
-      "expectedContains": "",
-      "timeoutSeconds": 10,
-      "intervalSeconds": 120,
-      "enabled": true,
-      "tags": ["command", "disk", "hetzner", "remote"]
-    },
-    {
-      "id": "hetzner-nginx-process",
-      "name": "Hetzner Nginx",
-      "type": "process",
-      "server": "lms",
-      "application": "webserver",
-      "serverId": "hetzner-lms",
-      "target": "nginx",
-      "timeoutSeconds": 10,
-      "intervalSeconds": 60,
-      "enabled": true,
-      "tags": ["process", "nginx", "hetzner", "remote"]
     }
   ]
 }
