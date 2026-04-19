@@ -44,15 +44,15 @@ func TestAlertRuleEngine_Evaluate_StatusCondition(t *testing.T) {
 
 	results := []CheckResult{
 		{
-			ID:          "result-1",
-			CheckID:     "check-1",
-			Name:        "Test Check",
-			Status:      "critical",
-			Healthy:     false,
-			DurationMs:  100,
-			StartedAt:   time.Now().UTC(),
-			FinishedAt:  time.Now().UTC(),
-			Metrics:     map[string]float64{},
+			ID:         "result-1",
+			CheckID:    "check-1",
+			Name:       "Test Check",
+			Status:     "critical",
+			Healthy:    false,
+			DurationMs: 100,
+			StartedAt:  time.Now().UTC(),
+			FinishedAt: time.Now().UTC(),
+			Metrics:    map[string]float64{},
 		},
 	}
 
@@ -101,15 +101,15 @@ func TestAlertRuleEngine_Evaluate_MultipleConditions(t *testing.T) {
 	// Should trigger: both conditions match
 	results := []CheckResult{
 		{
-			ID:          "result-1",
-			CheckID:     "check-1",
-			Name:        "Test Check",
-			Status:      "critical",
-			Healthy:     false,
-			DurationMs:  1500,
-			StartedAt:   time.Now().UTC(),
-			FinishedAt:  time.Now().UTC(),
-			Metrics:     map[string]float64{},
+			ID:         "result-1",
+			CheckID:    "check-1",
+			Name:       "Test Check",
+			Status:     "critical",
+			Healthy:    false,
+			DurationMs: 1500,
+			StartedAt:  time.Now().UTC(),
+			FinishedAt: time.Now().UTC(),
+			Metrics:    map[string]float64{},
 		},
 	}
 
@@ -121,15 +121,15 @@ func TestAlertRuleEngine_Evaluate_MultipleConditions(t *testing.T) {
 	// Should NOT trigger: second condition doesn't match
 	results2 := []CheckResult{
 		{
-			ID:          "result-2",
-			CheckID:     "check-1",
-			Name:        "Test Check",
-			Status:      "critical",
-			Healthy:     false,
-			DurationMs:  500,
-			StartedAt:   time.Now().UTC(),
-			FinishedAt:  time.Now().UTC(),
-			Metrics:     map[string]float64{},
+			ID:         "result-2",
+			CheckID:    "check-1",
+			Name:       "Test Check",
+			Status:     "critical",
+			Healthy:    false,
+			DurationMs: 500,
+			StartedAt:  time.Now().UTC(),
+			FinishedAt: time.Now().UTC(),
+			Metrics:    map[string]float64{},
 		},
 	}
 
@@ -163,15 +163,15 @@ func TestAlertRuleEngine_Evaluate_Cooldown(t *testing.T) {
 	engine := NewAlertRuleEngine(rules, logger)
 
 	result := CheckResult{
-		ID:          "result-1",
-		CheckID:     "check-1",
-		Name:        "Test Check",
-		Status:      "critical",
-		Healthy:     false,
-		DurationMs:  100,
-		StartedAt:   time.Now().UTC(),
-		FinishedAt:  time.Now().UTC(),
-		Metrics:     map[string]float64{},
+		ID:         "result-1",
+		CheckID:    "check-1",
+		Name:       "Test Check",
+		Status:     "critical",
+		Healthy:    false,
+		DurationMs: 100,
+		StartedAt:  time.Now().UTC(),
+		FinishedAt: time.Now().UTC(),
+		Metrics:    map[string]float64{},
 	}
 
 	// First evaluation should trigger
@@ -212,15 +212,15 @@ func TestAlertRuleEngine_Evaluate_DisabledRule(t *testing.T) {
 
 	results := []CheckResult{
 		{
-			ID:          "result-1",
-			CheckID:     "check-1",
-			Name:        "Test Check",
-			Status:      "critical",
-			Healthy:     false,
-			DurationMs:  100,
-			StartedAt:   time.Now().UTC(),
-			FinishedAt:  time.Now().UTC(),
-			Metrics:     map[string]float64{},
+			ID:         "result-1",
+			CheckID:    "check-1",
+			Name:       "Test Check",
+			Status:     "critical",
+			Healthy:    false,
+			DurationMs: 100,
+			StartedAt:  time.Now().UTC(),
+			FinishedAt: time.Now().UTC(),
+			Metrics:    map[string]float64{},
 		},
 	}
 
@@ -255,26 +255,26 @@ func TestAlertRuleEngine_Evaluate_CheckIDFilter(t *testing.T) {
 
 	results := []CheckResult{
 		{
-			ID:          "result-1",
-			CheckID:     "check-1",
-			Name:        "Check 1",
-			Status:      "critical",
-			Healthy:     false,
-			DurationMs:  100,
-			StartedAt:   time.Now().UTC(),
-			FinishedAt:  time.Now().UTC(),
-			Metrics:     map[string]float64{},
+			ID:         "result-1",
+			CheckID:    "check-1",
+			Name:       "Check 1",
+			Status:     "critical",
+			Healthy:    false,
+			DurationMs: 100,
+			StartedAt:  time.Now().UTC(),
+			FinishedAt: time.Now().UTC(),
+			Metrics:    map[string]float64{},
 		},
 		{
-			ID:          "result-2",
-			CheckID:     "check-2",
-			Name:        "Check 2",
-			Status:      "critical",
-			Healthy:     false,
-			DurationMs:  100,
-			StartedAt:   time.Now().UTC(),
-			FinishedAt:  time.Now().UTC(),
-			Metrics:     map[string]float64{},
+			ID:         "result-2",
+			CheckID:    "check-2",
+			Name:       "Check 2",
+			Status:     "critical",
+			Healthy:    false,
+			DurationMs: 100,
+			StartedAt:  time.Now().UTC(),
+			FinishedAt: time.Now().UTC(),
+			Metrics:    map[string]float64{},
 		},
 	}
 
@@ -313,15 +313,15 @@ func TestAlertRuleEngine_Evaluate_HealthyCondition(t *testing.T) {
 
 	results := []CheckResult{
 		{
-			ID:          "result-1",
-			CheckID:     "check-1",
-			Name:        "Test Check",
-			Status:      "warning",
-			Healthy:     false,
-			DurationMs:  100,
-			StartedAt:   time.Now().UTC(),
-			FinishedAt:  time.Now().UTC(),
-			Metrics:     map[string]float64{},
+			ID:         "result-1",
+			CheckID:    "check-1",
+			Name:       "Test Check",
+			Status:     "warning",
+			Healthy:    false,
+			DurationMs: 100,
+			StartedAt:  time.Now().UTC(),
+			FinishedAt: time.Now().UTC(),
+			Metrics:    map[string]float64{},
 		},
 	}
 
@@ -356,15 +356,15 @@ func TestAlertRuleEngine_Evaluate_DurationMsCondition(t *testing.T) {
 
 	results := []CheckResult{
 		{
-			ID:          "result-1",
-			CheckID:     "check-1",
-			Name:        "Test Check",
-			Status:      "healthy",
-			Healthy:     true,
-			DurationMs:  1500,
-			StartedAt:   time.Now().UTC(),
-			FinishedAt:  time.Now().UTC(),
-			Metrics:     map[string]float64{},
+			ID:         "result-1",
+			CheckID:    "check-1",
+			Name:       "Test Check",
+			Status:     "healthy",
+			Healthy:    true,
+			DurationMs: 1500,
+			StartedAt:  time.Now().UTC(),
+			FinishedAt: time.Now().UTC(),
+			Metrics:    map[string]float64{},
 		},
 	}
 
@@ -400,15 +400,15 @@ func TestAlertRuleEngine_Evaluate_NotEqualsOperator(t *testing.T) {
 	// Should trigger: status is "warning", not "healthy"
 	results := []CheckResult{
 		{
-			ID:          "result-1",
-			CheckID:     "check-1",
-			Name:        "Test Check",
-			Status:      "warning",
-			Healthy:     false,
-			DurationMs:  100,
-			StartedAt:   time.Now().UTC(),
-			FinishedAt:  time.Now().UTC(),
-			Metrics:     map[string]float64{},
+			ID:         "result-1",
+			CheckID:    "check-1",
+			Name:       "Test Check",
+			Status:     "warning",
+			Healthy:    false,
+			DurationMs: 100,
+			StartedAt:  time.Now().UTC(),
+			FinishedAt: time.Now().UTC(),
+			Metrics:    map[string]float64{},
 		},
 	}
 
@@ -443,15 +443,15 @@ func TestAlertRuleEngine_Evaluate_LessThanOperator(t *testing.T) {
 
 	results := []CheckResult{
 		{
-			ID:          "result-1",
-			CheckID:     "check-1",
-			Name:        "Test Check",
-			Status:      "healthy",
-			Healthy:     true,
-			DurationMs:  30,
-			StartedAt:   time.Now().UTC(),
-			FinishedAt:  time.Now().UTC(),
-			Metrics:     map[string]float64{},
+			ID:         "result-1",
+			CheckID:    "check-1",
+			Name:       "Test Check",
+			Status:     "healthy",
+			Healthy:    true,
+			DurationMs: 30,
+			StartedAt:  time.Now().UTC(),
+			FinishedAt: time.Now().UTC(),
+			Metrics:    map[string]float64{},
 		},
 	}
 
@@ -486,15 +486,15 @@ func TestAlertRuleEngine_SendAlert(t *testing.T) {
 
 	results := []CheckResult{
 		{
-			ID:          "result-1",
-			CheckID:     "check-1",
-			Name:        "Test Check",
-			Status:      "critical",
-			Healthy:     false,
-			DurationMs:  100,
-			StartedAt:   time.Now().UTC(),
-			FinishedAt:  time.Now().UTC(),
-			Metrics:     map[string]float64{},
+			ID:         "result-1",
+			CheckID:    "check-1",
+			Name:       "Test Check",
+			Status:     "critical",
+			Healthy:    false,
+			DurationMs: 100,
+			StartedAt:  time.Now().UTC(),
+			FinishedAt: time.Now().UTC(),
+			Metrics:    map[string]float64{},
 		},
 	}
 
@@ -566,9 +566,9 @@ func TestAlertRuleEngine_BuildAlertMessage(t *testing.T) {
 
 func TestAlertCondition_Validate(t *testing.T) {
 	tests := []struct {
-		name      string
-		cond      AlertCondition
-		wantErr   bool
+		name        string
+		cond        AlertCondition
+		wantErr     bool
 		errContains string
 	}{
 		{
@@ -604,7 +604,7 @@ func TestAlertCondition_Validate(t *testing.T) {
 				Operator: OperatorEquals,
 				Value:    "critical",
 			},
-			wantErr:      true,
+			wantErr:     true,
 			errContains: "field is required",
 		},
 		{
@@ -613,7 +613,7 @@ func TestAlertCondition_Validate(t *testing.T) {
 				Field: "status",
 				Value: "critical",
 			},
-			wantErr:      true,
+			wantErr:     true,
 			errContains: "operator is required",
 		},
 		{
@@ -623,7 +623,7 @@ func TestAlertCondition_Validate(t *testing.T) {
 				Operator: "invalid_op",
 				Value:    "critical",
 			},
-			wantErr:      true,
+			wantErr:     true,
 			errContains: "invalid operator",
 		},
 		{
@@ -633,7 +633,7 @@ func TestAlertCondition_Validate(t *testing.T) {
 				Operator: OperatorEquals,
 				Value:    "value",
 			},
-			wantErr:      true,
+			wantErr:     true,
 			errContains: "invalid field",
 		},
 	}
@@ -684,7 +684,7 @@ func TestAlertRule_Validate(t *testing.T) {
 		{
 			name: "missing ID",
 			rule: AlertRule{
-				Name:     "Test Rule",
+				Name: "Test Rule",
 				Conditions: []AlertCondition{
 					{
 						Field:    "status",
@@ -693,13 +693,13 @@ func TestAlertRule_Validate(t *testing.T) {
 					},
 				},
 			},
-			wantErr:      true,
+			wantErr:     true,
 			errContains: "rule ID is required",
 		},
 		{
 			name: "missing name",
 			rule: AlertRule{
-				ID:       "rule-1",
+				ID: "rule-1",
 				Conditions: []AlertCondition{
 					{
 						Field:    "status",
@@ -708,24 +708,24 @@ func TestAlertRule_Validate(t *testing.T) {
 					},
 				},
 			},
-			wantErr:      true,
+			wantErr:     true,
 			errContains: "rule name is required",
 		},
 		{
 			name: "no conditions",
 			rule: AlertRule{
-				ID:       "rule-1",
-				Name:     "Test Rule",
+				ID:         "rule-1",
+				Name:       "Test Rule",
 				Conditions: []AlertCondition{},
 			},
-			wantErr:      true,
+			wantErr:     true,
 			errContains: "at least one condition",
 		},
 		{
 			name: "negative cooldown",
 			rule: AlertRule{
-				ID:       "rule-1",
-				Name:     "Test Rule",
+				ID:   "rule-1",
+				Name: "Test Rule",
 				Conditions: []AlertCondition{
 					{
 						Field:    "status",
@@ -735,14 +735,14 @@ func TestAlertRule_Validate(t *testing.T) {
 				},
 				CooldownMinutes: -1,
 			},
-			wantErr:      true,
+			wantErr:     true,
 			errContains: "cooldown minutes must be >= 0",
 		},
 		{
 			name: "sets default severity",
 			rule: AlertRule{
-				ID:       "rule-1",
-				Name:     "Test Rule",
+				ID:   "rule-1",
+				Name: "Test Rule",
 				Conditions: []AlertCondition{
 					{
 						Field:    "status",
@@ -756,8 +756,8 @@ func TestAlertRule_Validate(t *testing.T) {
 		{
 			name: "sets default cooldown",
 			rule: AlertRule{
-				ID:       "rule-1",
-				Name:     "Test Rule",
+				ID:   "rule-1",
+				Name: "Test Rule",
 				Conditions: []AlertCondition{
 					{
 						Field:    "status",
@@ -849,15 +849,15 @@ func TestAlertRuleEngine_IntegrationWithStandardLogger(t *testing.T) {
 
 	results := []CheckResult{
 		{
-			ID:          "result-1",
-			CheckID:     "check-1",
-			Name:        "Test Check",
-			Status:      "critical",
-			Healthy:     false,
-			DurationMs:  100,
-			StartedAt:   time.Now().UTC(),
-			FinishedAt:  time.Now().UTC(),
-			Metrics:     map[string]float64{},
+			ID:         "result-1",
+			CheckID:    "check-1",
+			Name:       "Test Check",
+			Status:     "critical",
+			Healthy:    false,
+			DurationMs: 100,
+			StartedAt:  time.Now().UTC(),
+			FinishedAt: time.Now().UTC(),
+			Metrics:    map[string]float64{},
 		},
 	}
 

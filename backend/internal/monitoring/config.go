@@ -151,6 +151,34 @@ func (c *CheckConfig) validate(cfg *Config) error {
 		if c.FreshnessSeconds <= 0 {
 			return fmt.Errorf("freshnessSeconds is required for log checks")
 		}
+	case "mysql":
+		if c.MySQL == nil {
+			return fmt.Errorf("mysql config block is required for mysql checks")
+		}
+		if c.MySQL.DSNEnv == "" {
+			return fmt.Errorf("mysql.dsnEnv is required for mysql checks")
+		}
+		if c.MySQL.ConnectTimeoutSeconds <= 0 {
+			c.MySQL.ConnectTimeoutSeconds = 3
+		}
+		if c.MySQL.QueryTimeoutSeconds <= 0 {
+			c.MySQL.QueryTimeoutSeconds = 5
+		}
+		if c.MySQL.ProcesslistLimit <= 0 {
+			c.MySQL.ProcesslistLimit = 50
+		}
+		if c.MySQL.StatementLimit <= 0 {
+			c.MySQL.StatementLimit = 20
+		}
+		if c.MySQL.HostUserLimit <= 0 {
+			c.MySQL.HostUserLimit = 20
+		}
+		if c.IntervalSeconds <= 0 {
+			c.IntervalSeconds = 15
+		}
+		if c.TimeoutSeconds <= 0 {
+			c.TimeoutSeconds = 10
+		}
 	default:
 		return fmt.Errorf("unsupported type %q", c.Type)
 	}

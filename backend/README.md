@@ -1,6 +1,6 @@
 # Backend
 
-Go backend for the monitoring console.
+Go backend for the HealthOps monitoring console. Provides health checks, MySQL monitoring, incident management, alert rules, BYOK AI-powered analysis, and a comprehensive REST API (62 endpoints).
 
 ## Run
 
@@ -9,28 +9,46 @@ cd backend
 go run ./cmd/healthmon
 ```
 
+## Test
+
+```bash
+cd backend
+go test ./...           # all tests
+go test ./... -race      # with race detector
+go fmt ./...             # format before committing
+```
+
 ## Environment
 
-- `CONFIG_PATH`: path to the JSON config file, default `config/default.json`
-- `STATE_PATH`: path to the persisted state file, default `data/state.json`
-- `MONGODB_URI`: optional MongoDB connection string for mirrored persistence
-- `MONGODB_DATABASE`: MongoDB database name, default `healthmon`
-- `MONGODB_COLLECTION_PREFIX`: collection prefix, default `healthmon`
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CONFIG_PATH` | `config/default.json` | JSON config file |
+| `STATE_PATH` | `data/state.json` | Persisted state file |
+| `DATA_DIR` | `data/` | JSONL repositories, AI config |
+| `MONGODB_URI` | — | Optional MongoDB mirror |
+| `MONGODB_DATABASE` | `healthmon` | MongoDB database name |
+| `MONGODB_COLLECTION_PREFIX` | `healthmon` | Collection prefix |
+| `{check.mysql.dsnEnv}` | — | MySQL DSN per check (never logged) |
 
 MongoDB is best-effort only. The backend keeps running with the local file store if MongoDB is unavailable.
 
+## Key Features
+
+- **Health Checks**: `api`, `tcp`, `process`, `command`, `log`, `mysql` check types
+- **MySQL Monitoring**: Collects `SHOW GLOBAL STATUS/VARIABLES`, computes deltas, 9 default alert rules
+- **Incidents**: Auto-created from alert rules, acknowledge/resolve lifecycle, evidence snapshots
+- **Alert Rules**: Configurable thresholds, cooldowns, consecutive breaches, per-check or global
+- **BYOK AI Analysis**: Configure OpenAI/Anthropic/Google/Ollama/Custom providers from the UI. API keys AES-256-GCM encrypted at rest. Auto-analyzes incidents with configurable prompt templates.
+- **Analytics**: Uptime, response times, failure rates, incident MTTA/MTTR
+- **Export**: CSV/JSON export for MySQL samples, incidents, and results
+- **Observability**: Prometheus metrics, audit logging, SSE live events
+
 ## API
 
-- `GET /healthz`
-- `GET /readyz`
-- `GET /api/v1/checks`
-- `POST /api/v1/checks`
-- `PUT /api/v1/checks/{id}`
-- `DELETE /api/v1/checks/{id}`
-- `POST /api/v1/runs`
-- `GET /api/v1/summary`
-- `GET /api/v1/results?checkId=&days=7`
-- Dashboard aliases:
-  - `GET /api/v1/dashboard/checks`
-  - `GET /api/v1/dashboard/summary`
-  - `GET /api/v1/dashboard/results`
+Full reference: [`docs/api-reference.md`](docs/api-reference.md) (62 endpoints)
+
+**Core**: `/healthz`, `/readyz`, checks CRUD, runs, summary, results, dashboard  
+**Incidents**: list, get, acknowledge, resolve, snapshots  
+**MySQL**: samples, deltas, health card, time-series  
+**BYOK AI**: config, providers, prompts, analyze, health, results  
+**More**: alert rules, analytics, audit, notifications, SSE, config, stats, exports, `/metrics`

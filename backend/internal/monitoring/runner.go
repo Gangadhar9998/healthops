@@ -16,12 +16,13 @@ import (
 )
 
 type Runner struct {
-	cfg     *Config
-	store   Store
-	client  *http.Client
-	metrics *MetricsCollector
-	running bool
-	mu      sync.Mutex
+	cfg          *Config
+	store        Store
+	client       *http.Client
+	metrics      *MetricsCollector
+	mysqlSampler MySQLSampler
+	running      bool
+	mu           sync.Mutex
 }
 
 func NewRunner(cfg *Config, store Store) *Runner {
@@ -172,6 +173,8 @@ func (r *Runner) executeCheck(ctx context.Context, check CheckConfig) CheckResul
 		err = r.runCommand(checkCtx, check, &result)
 	case "log":
 		err = r.runLogFreshness(checkCtx, check, &result)
+	case "mysql":
+		err = r.runMySQL(checkCtx, check, &result)
 	default:
 		err = fmt.Errorf("unsupported check type %q", check.Type)
 	}
@@ -328,4 +331,44 @@ func processListCommand() (string, []string) {
 		return "ps", []string{"-ax", "-o", "pid=,command="}
 	}
 	return "ps", []string{"-eo", "pid=,args="}
+}
+
+// SetMySQLSampler sets the MySQL sampler for the runner.
+func (r *Runner) SetMySQLSampler(sampler MySQLSampler) {
+	r.mysqlSampler = sampler
+}
+
+func (r *Runner) runMySQL(ctx context.Context, check CheckConfig, result *CheckResult) error {
+	if r.mysqlSampler == nil {
+		return fmt.Errorf("mysql sampler not configured")
+	}
+	if check.MySQL == nil {
+		return fmt.Errorf("mysql config block is required")
+	}
+
+	sample, err := r.mysqlSampler.Collect(ctx, check)
+	if err != nil {
+		return err
+	}
+
+	result.Metrics["connections"] = float64(sample.Connections)
+	result.Metrics["maxConnections"] = float64(sample.MaxConnections)
+	result.Metrics["threadsRunning"] = float64(sample.ThreadsRunning)
+	result.Metrics["threadsConnected"] = float64(sample.ThreadsConnected)
+	result.Metrics["abortedConnects"] = float64(sample.AbortedConnects)
+	result.Metrics["slowQueries"] = float64(sample.SlowQueries)
+	result.Metrics["questionsPerSec"] = sample.QuestionsPerSec
+	result.Metrics["uptimeSeconds"] = float64(sample.UptimeSeconds)
+	result.Metrics["innodbRowLockWaits"] = float64(sample.InnoDBRowLockWaits)
+	result.Metrics["createdTmpDiskTables"] = float64(sample.CreatedTmpDiskTables)
+	result.Metrics["createdTmpTables"] = float64(sample.CreatedTmpTables)
+	result.Metrics["threadsCreated"] = float64(sample.ThreadsCreated)
+	result.Metrics["maxUsedConnections"] = float64(sample.MaxUsedConnections)
+
+	if sample.MaxConnections > 0 {
+		utilPct := float64(sample.Connections) / float64(sample.MaxConnections) * 100
+		result.Metrics["connectionUtilPct"] = utilPct
+	}
+
+	return nil
 }

@@ -1,10 +1,13 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `backend/` is the new Go service. `backend/cmd/healthmon/main.go` is the entrypoint and `backend/internal/monitoring/` holds config, store, runner, and HTTP handlers.
+- `backend/` is the Go service. `backend/cmd/healthmon/main.go` is the entrypoint.
+- `backend/internal/monitoring/` holds config, store, runner, HTTP handlers, MySQL monitoring, AI BYOK layer, incidents, analytics, and alert rules.
 - `backend/config/default.json` defines the initial monitored checks and runtime defaults.
-- `backend/data/` stores the file-backed state used by the API and scheduler.
+- `backend/data/` stores the file-backed state: `state.json`, JSONL repositories, AI config, encryption keys.
+- `backend/docs/` holds API reference, migration specs, security audit, and release checklist.
 - `frontend/` is reserved for the monitoring UI and should stay separate from backend code.
+- `docs/` contains architectural decision records (ADRs) and the operational runbook.
 
 ## Build, Test, and Development Commands
 - `cd backend && go run ./cmd/healthmon` starts the monitoring API and scheduler.
@@ -20,7 +23,8 @@
 
 ## Testing Guidelines
 - Add Go tests next to the code they cover, for example `backend/internal/monitoring/config_test.go`.
-- Focus tests on config validation, result retention, check execution, and API handlers.
+- Test types: unit tests, contract tests (`contract_test.go`), E2E tests (`e2e_test.go`, `mysql_e2e_test.go`), race tests (`mysql_race_test.go`), security tests (`security_audit_test.go`).
+- Focus tests on config validation, result retention, check execution, API handlers, AI config encryption, and incident lifecycle.
 - For manual verification, hit `/healthz`, `/api/v1/summary`, and `GET /api/v1/checks` after starting the service.
 
 ## Commit & Pull Request Guidelines
@@ -31,4 +35,6 @@
 ## Security & Configuration Tips
 - Do not hardcode credentials, webhook URLs, or passwords in source files.
 - Keep secrets in environment variables or deployment config, never in `backend/config/default.json`.
+- AI provider API keys are AES-256-GCM encrypted at rest in `data/ai_config.json` and always masked in API responses.
+- MySQL DSNs are read from environment variables referenced by `dsnEnv` in check config.
 - Review config changes carefully because they directly control alerting and monitoring scope.

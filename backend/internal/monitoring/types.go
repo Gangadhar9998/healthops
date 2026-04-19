@@ -51,6 +51,7 @@ type CheckConfig struct {
 	Enabled            *bool             `json:"enabled,omitempty" bson:"enabled,omitempty"`
 	Tags               []string          `json:"tags,omitempty" bson:"tags,omitempty"`
 	Metadata           map[string]string `json:"metadata,omitempty" bson:"metadata,omitempty"`
+	MySQL              *MySQLCheckConfig `json:"mysql,omitempty" bson:"mysql,omitempty"`
 }
 
 type State struct {
@@ -124,20 +125,20 @@ type Store interface {
 }
 
 type Incident struct {
-	ID          string                 `json:"id" bson:"_id"`
-	CheckID     string                 `json:"checkId" bson:"checkId"`
-	CheckName   string                 `json:"checkName" bson:"checkName"`
-	Type        string                 `json:"type" bson:"type"`
-	Status      string                 `json:"status" bson:"status"` // open, acknowledged, resolved
-	Severity    string                 `json:"severity" bson:"severity"` // warning, critical
-	Message     string                 `json:"message" bson:"message"`
-	StartedAt   time.Time              `json:"startedAt" bson:"startedAt"`
-	UpdatedAt   time.Time              `json:"updatedAt" bson:"updatedAt"`
-	ResolvedAt  *time.Time             `json:"resolvedAt,omitempty" bson:"resolvedAt,omitempty"`
-	AcknowledgedAt *time.Time          `json:"acknowledgedAt,omitempty" bson:"acknowledgedAt,omitempty"`
-	AcknowledgedBy string              `json:"acknowledgedBy,omitempty" bson:"acknowledgedBy,omitempty"`
-	ResolvedBy     string              `json:"resolvedBy,omitempty" bson:"resolvedBy,omitempty"`
-	Metadata        map[string]string  `json:"metadata,omitempty" bson:"metadata,omitempty"`
+	ID             string            `json:"id" bson:"_id"`
+	CheckID        string            `json:"checkId" bson:"checkId"`
+	CheckName      string            `json:"checkName" bson:"checkName"`
+	Type           string            `json:"type" bson:"type"`
+	Status         string            `json:"status" bson:"status"`     // open, acknowledged, resolved
+	Severity       string            `json:"severity" bson:"severity"` // warning, critical
+	Message        string            `json:"message" bson:"message"`
+	StartedAt      time.Time         `json:"startedAt" bson:"startedAt"`
+	UpdatedAt      time.Time         `json:"updatedAt" bson:"updatedAt"`
+	ResolvedAt     *time.Time        `json:"resolvedAt,omitempty" bson:"resolvedAt,omitempty"`
+	AcknowledgedAt *time.Time        `json:"acknowledgedAt,omitempty" bson:"acknowledgedAt,omitempty"`
+	AcknowledgedBy string            `json:"acknowledgedBy,omitempty" bson:"acknowledgedBy,omitempty"`
+	ResolvedBy     string            `json:"resolvedBy,omitempty" bson:"resolvedBy,omitempty"`
+	Metadata       map[string]string `json:"metadata,omitempty" bson:"metadata,omitempty"`
 }
 
 type Mirror interface {
@@ -171,27 +172,92 @@ type AlertChannel struct {
 
 // AlertRule defines when and how to trigger alerts.
 type AlertRule struct {
-	ID              string          `json:"id" bson:"id"`
-	Name            string          `json:"name" bson:"name"`
-	Enabled         bool            `json:"enabled" bson:"enabled"`
-	CheckIDs        []string        `json:"checkIds" bson:"checkIds"`
-	Conditions      []AlertCondition `json:"conditions" bson:"conditions"`
-	Severity        string          `json:"severity" bson:"severity"`
-	Channels        []AlertChannel  `json:"channels" bson:"channels"`
-	CooldownMinutes int             `json:"cooldownMinutes" bson:"cooldownMinutes"`
-	Description     string          `json:"description,omitempty" bson:"description,omitempty"`
+	ID                  string           `json:"id" bson:"id"`
+	Name                string           `json:"name" bson:"name"`
+	Enabled             bool             `json:"enabled" bson:"enabled"`
+	CheckIDs            []string         `json:"checkIds" bson:"checkIds"`
+	Conditions          []AlertCondition `json:"conditions" bson:"conditions"`
+	Severity            string           `json:"severity" bson:"severity"`
+	Channels            []AlertChannel   `json:"channels" bson:"channels"`
+	CooldownMinutes     int              `json:"cooldownMinutes" bson:"cooldownMinutes"`
+	Description         string           `json:"description,omitempty" bson:"description,omitempty"`
+	ConsecutiveBreaches int              `json:"consecutiveBreaches,omitempty" bson:"consecutiveBreaches,omitempty"`
+	RecoverySamples     int              `json:"recoverySamples,omitempty" bson:"recoverySamples,omitempty"`
+	ThresholdNum        float64          `json:"thresholdNum,omitempty" bson:"thresholdNum,omitempty"`
+	RuleCode            string           `json:"ruleCode,omitempty" bson:"ruleCode,omitempty"`
 }
 
 // Alert represents a triggered alert.
 type Alert struct {
-	ID          string    `json:"id" bson:"_id"`
-	RuleID      string    `json:"ruleId" bson:"ruleId"`
-	RuleName    string    `json:"ruleName" bson:"ruleName"`
-	CheckID     string    `json:"checkId" bson:"checkId"`
-	CheckName   string    `json:"checkName" bson:"checkName"`
-	Severity    string    `json:"severity" bson:"severity"`
-	Status      string    `json:"status" bson:"status"`
-	Message     string    `json:"message" bson:"message"`
-	TriggeredAt time.Time `json:"triggeredAt" bson:"triggeredAt"`
+	ID          string     `json:"id" bson:"_id"`
+	RuleID      string     `json:"ruleId" bson:"ruleId"`
+	RuleName    string     `json:"ruleName" bson:"ruleName"`
+	CheckID     string     `json:"checkId" bson:"checkId"`
+	CheckName   string     `json:"checkName" bson:"checkName"`
+	Severity    string     `json:"severity" bson:"severity"`
+	Status      string     `json:"status" bson:"status"`
+	Message     string     `json:"message" bson:"message"`
+	TriggeredAt time.Time  `json:"triggeredAt" bson:"triggeredAt"`
 	ResolvedAt  *time.Time `json:"resolvedAt,omitempty" bson:"resolvedAt,omitempty"`
+}
+
+// AlertState tracks the streak state for a rule+check pair.
+type AlertState struct {
+	RuleCode       string `json:"ruleCode" bson:"ruleCode"`
+	CheckID        string `json:"checkId" bson:"checkId"`
+	Status         string `json:"status" bson:"status"` // OK or OPEN
+	BreachStreak   int    `json:"breachStreak" bson:"breachStreak"`
+	RecoveryStreak int    `json:"recoveryStreak" bson:"recoveryStreak"`
+	OpenIncidentID string `json:"openIncidentId,omitempty" bson:"openIncidentId,omitempty"`
+}
+
+// MySQLCheckConfig holds MySQL-specific check configuration.
+type MySQLCheckConfig struct {
+	DSNEnv                string `json:"dsnEnv" bson:"dsnEnv"`
+	ConnectTimeoutSeconds int    `json:"connectTimeoutSeconds,omitempty" bson:"connectTimeoutSeconds,omitempty"`
+	QueryTimeoutSeconds   int    `json:"queryTimeoutSeconds,omitempty" bson:"queryTimeoutSeconds,omitempty"`
+	ProcesslistLimit      int    `json:"processlistLimit,omitempty" bson:"processlistLimit,omitempty"`
+	StatementLimit        int    `json:"statementLimit,omitempty" bson:"statementLimit,omitempty"`
+	HostUserLimit         int    `json:"hostUserLimit,omitempty" bson:"hostUserLimit,omitempty"`
+}
+
+// IncidentSnapshot holds evidence captured at incident open time.
+type IncidentSnapshot struct {
+	IncidentID   string    `json:"incidentId" bson:"incidentId"`
+	SnapshotType string    `json:"snapshotType" bson:"snapshotType"`
+	Timestamp    time.Time `json:"timestamp" bson:"timestamp"`
+	PayloadJSON  string    `json:"payloadJson" bson:"payloadJson"`
+}
+
+// NotificationEvent represents a queued notification for external delivery.
+type NotificationEvent struct {
+	NotificationID string     `json:"notificationId" bson:"notificationId"`
+	IncidentID     string     `json:"incidentId" bson:"incidentId"`
+	Channel        string     `json:"channel" bson:"channel"`
+	PayloadJSON    string     `json:"payloadJson" bson:"payloadJson"`
+	Status         string     `json:"status" bson:"status"` // pending, sent, failed
+	RetryCount     int        `json:"retryCount" bson:"retryCount"`
+	LastError      string     `json:"lastError,omitempty" bson:"lastError,omitempty"`
+	CreatedAt      time.Time  `json:"createdAt" bson:"createdAt"`
+	SentAt         *time.Time `json:"sentAt,omitempty" bson:"sentAt,omitempty"`
+}
+
+// AIQueueItem represents a queued AI analysis request.
+type AIQueueItem struct {
+	IncidentID    string     `json:"incidentId" bson:"incidentId"`
+	PromptVersion string     `json:"promptVersion" bson:"promptVersion"`
+	Status        string     `json:"status" bson:"status"` // pending, processing, completed, failed
+	CreatedAt     time.Time  `json:"createdAt" bson:"createdAt"`
+	ClaimedAt     *time.Time `json:"claimedAt,omitempty" bson:"claimedAt,omitempty"`
+	CompletedAt   *time.Time `json:"completedAt,omitempty" bson:"completedAt,omitempty"`
+	LastError     string     `json:"lastError,omitempty" bson:"lastError,omitempty"`
+}
+
+// AIAnalysisResult holds the result of an AI analysis.
+type AIAnalysisResult struct {
+	IncidentID  string    `json:"incidentId" bson:"incidentId"`
+	Analysis    string    `json:"analysis" bson:"analysis"`
+	Suggestions []string  `json:"suggestions,omitempty" bson:"suggestions,omitempty"`
+	Severity    string    `json:"severity,omitempty" bson:"severity,omitempty"`
+	CreatedAt   time.Time `json:"createdAt" bson:"createdAt"`
 }

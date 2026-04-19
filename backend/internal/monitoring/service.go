@@ -23,6 +23,8 @@ type Service struct {
 	metrics         *MetricsCollector
 	logger          *log.Logger
 	auditLogger     *AuditLogger
+	mysqlAPIHandler *MySQLAPIHandler
+	aiAPIHandler    *AIAPIHandler
 }
 
 func NewService(cfg *Config, store Store, logger *log.Logger) *Service {
@@ -107,6 +109,21 @@ func (s *Service) SetAlertEngine(ae *AlertRuleEngine) {
 	s.alertEngine = ae
 }
 
+// SetMySQLAPIHandler sets the MySQL API handler for the service
+func (s *Service) SetMySQLAPIHandler(h *MySQLAPIHandler) {
+	s.mysqlAPIHandler = h
+}
+
+// SetAIAPIHandler sets the AI API handler for the service
+func (s *Service) SetAIAPIHandler(h *AIAPIHandler) {
+	s.aiAPIHandler = h
+}
+
+// Runner returns the service's runner for external configuration.
+func (s *Service) Runner() *Runner {
+	return s.runner
+}
+
 func (s *Service) Run(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealthz)
@@ -119,9 +136,43 @@ func (s *Service) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/dashboard/checks", s.handleDashboardChecks)
 	mux.HandleFunc("/api/v1/dashboard/summary", s.handleDashboardSummary)
 	mux.HandleFunc("/api/v1/dashboard/results", s.handleDashboardResults)
-	mux.HandleFunc("/api/v1/incidents", s.handleIncidents)
+	mux.HandleFunc("/api/v1/incidents", s.handleIncidentsFiltered)
 	mux.HandleFunc("/api/v1/incidents/", s.handleIncidentByID)
 	mux.HandleFunc("/api/v1/audit", s.handleAudit)
+
+	// Analytics and stats endpoints
+	mux.HandleFunc("/api/v1/analytics/uptime", s.handleAnalyticsUptime)
+	mux.HandleFunc("/api/v1/analytics/response-times", s.handleAnalyticsResponseTimes)
+	mux.HandleFunc("/api/v1/analytics/status-timeline", s.handleAnalyticsStatusTimeline)
+	mux.HandleFunc("/api/v1/analytics/failure-rate", s.handleAnalyticsFailureRate)
+	mux.HandleFunc("/api/v1/analytics/incidents", s.handleAnalyticsMTTR)
+	mux.HandleFunc("/api/v1/stats/overview", s.handleStatsOverview)
+
+	// Config and alert rules
+	mux.HandleFunc("/api/v1/config", s.handleConfig)
+	mux.HandleFunc("/api/v1/alert-rules", s.handleAlertRules)
+	mux.HandleFunc("/api/v1/alert-rules/", s.handleAlertRuleByID)
+
+	// SSE and auth
+	mux.HandleFunc("/api/v1/events", s.handleSSE)
+	mux.HandleFunc("/api/v1/auth/me", s.handleAuthMe)
+
+	// Export endpoints
+	if s.incidentManager != nil {
+		mux.HandleFunc("/api/v1/export/incidents", handleExportIncidents(s.incidentManager.repo))
+	}
+	mux.HandleFunc("/api/v1/export/results", handleExportResults(s.store, s.cfg.RetentionDays))
+
+	// Register MySQL/generic API routes if handler is configured
+	if s.mysqlAPIHandler != nil {
+		s.mysqlAPIHandler.RegisterRoutes(mux)
+		s.mysqlAPIHandler.RegisterAnalyticsRoutes(mux)
+	}
+
+	// Register AI API routes if handler is configured
+	if s.aiAPIHandler != nil {
+		s.aiAPIHandler.RegisterRoutes(mux)
+	}
 
 	// Add Prometheus metrics endpoint
 	mux.Handle("/metrics", s.metrics.Handler())
@@ -230,6 +281,9 @@ func (s *Service) handleCheckByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch r.Method {
+	case http.MethodGet:
+		s.handleGetCheck(w, r, id)
+		return
 	case http.MethodPut, http.MethodPatch:
 		if !isRequestAuthorized(s.cfg.Auth, r) {
 			requestAuth(w)

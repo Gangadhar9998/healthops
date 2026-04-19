@@ -44,8 +44,8 @@ type AuditRepository interface {
 
 // FileAuditRepository implements audit logging to a file
 type FileAuditRepository struct {
-	mu    sync.RWMutex
-	path  string
+	mu     sync.RWMutex
+	path   string
 	events []AuditEvent
 }
 

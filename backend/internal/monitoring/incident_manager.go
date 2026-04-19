@@ -15,10 +15,14 @@ type IncidentRepository interface {
 	FindOpenIncident(checkID string) (Incident, error)
 }
 
+// IncidentCreatedCallback is called when a new incident is created.
+type IncidentCreatedCallback func(incident Incident)
+
 // IncidentManager handles incident lifecycle
 type IncidentManager struct {
-	repo   IncidentRepository
-	logger *log.Logger
+	repo              IncidentRepository
+	logger            *log.Logger
+	onIncidentCreated IncidentCreatedCallback
 }
 
 // NewIncidentManager creates a new incident manager
@@ -71,6 +75,12 @@ func (im *IncidentManager) createIncident(checkID, checkName, checkType, severit
 	}
 
 	im.logger.Printf("Incident created: %s for check %s (%s)", incident.ID, checkID, severity)
+
+	// Notify callback (e.g. AI analysis enqueue)
+	if im.onIncidentCreated != nil {
+		im.onIncidentCreated(incident)
+	}
+
 	return nil
 }
 
@@ -130,6 +140,11 @@ func (im *IncidentManager) ResolveIncident(id, resolvedBy string) error {
 		im.logger.Printf("Incident resolved: %s by %s", id, resolvedBy)
 		return nil
 	})
+}
+
+// SetOnIncidentCreated sets a callback for new incidents (e.g. AI analysis enqueue).
+func (im *IncidentManager) SetOnIncidentCreated(cb IncidentCreatedCallback) {
+	im.onIncidentCreated = cb
 }
 
 // AutoResolveOnRecovery automatically resolves an incident when a check recovers
