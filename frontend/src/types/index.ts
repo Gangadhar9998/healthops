@@ -537,4 +537,15 @@ export interface MySQLLiveSnapshot {
   longRunning: MySQLProcess[]
   activeQueries: number
   longRunningCount: number
+  // Extended real-time fields
+  status: string
+  abortedConnects: number
+  abortedClients: number
+  connectionsRefused: number
+  maxUsedConnections: number
+  innodbRowLockWaits: number
+  tableLocksWaited: number
+  bufferPoolHitRate: number
+  userStats?: MySQLUserStat[]
+  hostStats?: MySQLHostStat[]
 }

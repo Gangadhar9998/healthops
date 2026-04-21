@@ -40,9 +40,10 @@ export default function MySQL() {
   const statusMap: Record<string, 'healthy' | 'warning' | 'critical' | 'neutral'> = {
     healthy: 'healthy', warning: 'warning', critical: 'critical',
   }
-  const userStats = health.userStats || []
-  const hostStats = health.hostStats || []
+  const userStats = live?.userStats ?? health.userStats ?? []
+  const hostStats = live?.hostStats ?? health.hostStats ?? []
   const topQueries = health.topQueries || []
+  const currentStatus = live?.status ?? health.status
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -89,10 +90,10 @@ export default function MySQL() {
         <ClickableMetricCard
           to="/mysql/server"
           label="Status"
-          value={health.status.charAt(0).toUpperCase() + health.status.slice(1)}
-          subValue={`Uptime: ${formatUptime(health.uptime)}`}
+          value={currentStatus.charAt(0).toUpperCase() + currentStatus.slice(1)}
+          subValue={`Uptime: ${formatUptime(live?.uptimeSeconds ?? health.uptime)}`}
           icon={<Database className="h-5 w-5" />}
-          status={statusMap[health.status] || 'neutral'}
+          status={statusMap[currentStatus] || 'neutral'}
         />
         <ClickableMetricCard
           to="/mysql/connections"
@@ -132,19 +133,19 @@ export default function MySQL() {
 
       {/* Connection utilization bar + quick preview */}
       <div className="grid gap-4 lg:grid-cols-3">
-        <UtilizationBar label="Connection Utilization" value={health.connections} max={health.maxConnections} />
+        <UtilizationBar label="Connection Utilization" value={live?.connections ?? health.connections} max={health.maxConnections} />
 
         {/* Quick user breakdown preview (top 3) */}
         <BreakdownCard
           title="Top Users"
-          items={userStats.slice(0, 3).map(u => ({ label: u.user, value: u.currentConnections, total: u.totalConnections, maxValue: health.connections }))}
+          items={userStats.slice(0, 3).map(u => ({ label: u.user, value: u.currentConnections, total: u.totalConnections, maxValue: live?.connections ?? health.connections }))}
           emptyMessage="No user stats"
         />
 
         {/* Quick host breakdown preview (top 3) */}
         <BreakdownCard
           title="Top Hosts"
-          items={hostStats.slice(0, 3).map(h => ({ label: h.host, value: h.currentConnections, total: h.totalConnections, maxValue: health.connections }))}
+          items={hostStats.slice(0, 3).map(h => ({ label: h.host, value: h.currentConnections, total: h.totalConnections, maxValue: live?.connections ?? health.connections }))}
           barColor={(v) => v > 20 ? 'bg-red-500' : v > 5 ? 'bg-amber-500' : 'bg-indigo-500'}
           emptyMessage="No host stats"
           mono
@@ -199,9 +200,9 @@ export default function MySQL() {
           <DangerStat
             to="/mysql/server?section=query-efficiency"
             label="Buffer Pool Hit Rate"
-            value={`${(health.bufferPoolHitRate ?? 0).toFixed(2)}%`}
-            severity={health.bufferPoolHitRate != null ? (health.bufferPoolHitRate < 95 ? 'critical' : health.bufferPoolHitRate < 99 ? 'warning' : 'ok') : 'ok'}
-            hint={health.bufferPoolHitRate != null && health.bufferPoolHitRate < 99 ? 'Reads going to disk instead of buffer' : 'Good — mostly served from memory'}
+            value={`${(live?.bufferPoolHitRate ?? health.bufferPoolHitRate ?? 0).toFixed(2)}%`}
+            severity={(live?.bufferPoolHitRate ?? health.bufferPoolHitRate ?? 100) < 95 ? 'critical' : (live?.bufferPoolHitRate ?? health.bufferPoolHitRate ?? 100) < 99 ? 'warning' : 'ok'}
+            hint={(live?.bufferPoolHitRate ?? health.bufferPoolHitRate ?? 100) < 99 ? 'Reads going to disk instead of buffer' : 'Good — mostly served from memory'}
           />
           <DangerStat
             to="/mysql/queries?highlight=full-scans"
@@ -227,15 +228,15 @@ export default function MySQL() {
           <DangerStat
             to="/mysql/server?section=resources"
             label="Table Lock Waits"
-            value={formatNumber(health.tableLocksWaited ?? 0)}
-            severity={(health.tableLocksWaited ?? 0) > 100 ? 'critical' : (health.tableLocksWaited ?? 0) > 0 ? 'warning' : 'ok'}
+            value={formatNumber(live?.tableLocksWaited ?? health.tableLocksWaited ?? 0)}
+            severity={(live?.tableLocksWaited ?? health.tableLocksWaited ?? 0) > 100 ? 'critical' : (live?.tableLocksWaited ?? health.tableLocksWaited ?? 0) > 0 ? 'warning' : 'ok'}
             hint={`${formatNumber(health.tableLocksImmediate ?? 0)} immediate locks`}
           />
           <DangerStat
             to="/mysql/connections?highlight=refused"
             label="Connections Refused"
-            value={formatNumber(health.connectionsRefused ?? 0)}
-            severity={(health.connectionsRefused ?? 0) > 0 ? 'critical' : 'ok'}
+            value={formatNumber(live?.connectionsRefused ?? health.connectionsRefused ?? 0)}
+            severity={(live?.connectionsRefused ?? health.connectionsRefused ?? 0) > 0 ? 'critical' : 'ok'}
             hint="Rejected due to max_connections"
           />
           <DangerStat
@@ -314,10 +315,10 @@ export default function MySQL() {
           </a>
         </div>
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 text-sm">
-          <QuickStat icon={<Server className="h-4 w-4" />} label="Uptime" value={formatUptime(health.uptime)} />
-          <QuickStat icon={<Gauge className="h-4 w-4" />} label="Queries/sec" value={health.queriesPerSec.toFixed(1)} />
-          <QuickStat icon={<Shield className="h-4 w-4" />} label="Lock Waits" value={String(health.innodbRowLockWaits)} warn={health.innodbRowLockWaits > 0} />
-          <QuickStat icon={<Clock className="h-4 w-4" />} label="Slow Queries" value={String(health.totalSlowQueries)} warn={health.totalSlowQueries > 0} />
+          <QuickStat icon={<Server className="h-4 w-4" />} label="Uptime" value={formatUptime(live?.uptimeSeconds ?? health.uptime)} />
+          <QuickStat icon={<Gauge className="h-4 w-4" />} label="Queries/sec" value={(live?.queriesPerSec ?? health.queriesPerSec).toFixed(1)} />
+          <QuickStat icon={<Shield className="h-4 w-4" />} label="Lock Waits" value={String(live?.innodbRowLockWaits ?? health.innodbRowLockWaits)} warn={(live?.innodbRowLockWaits ?? health.innodbRowLockWaits) > 0} />
+          <QuickStat icon={<Clock className="h-4 w-4" />} label="Slow Queries" value={String(live?.slowQueries ?? health.totalSlowQueries)} warn={(live?.slowQueries ?? health.totalSlowQueries) > 0} />
         </div>
       </div>
 
