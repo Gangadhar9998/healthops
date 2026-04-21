@@ -48,6 +48,8 @@ func (h *MySQLAPIHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/ai/queue/", h.handleAIQueueByID)
 	// Analytics & export routes
 	h.RegisterAnalyticsRoutes(mux)
+	// Real-time live monitoring routes
+	h.RegisterLiveRoutes(mux)
 }
 
 // firstMySQLCheckID returns the ID of the first enabled MySQL check, or "" if none exist.

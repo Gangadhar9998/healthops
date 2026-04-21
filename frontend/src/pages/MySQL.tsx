@@ -5,6 +5,8 @@ import { mysqlApi } from '@/api/mysql'
 import { ClickableMetricCard } from '@/components/db/ClickableMetricCard'
 import { UtilizationBar } from '@/components/db/UtilizationBar'
 import { BreakdownCard } from '@/components/db/BreakdownCard'
+import { LiveIndicator } from '@/components/db/LiveIndicator'
+import { Sparkline } from '@/components/charts/Sparkline'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { EmptyState } from '@/components/EmptyState'
@@ -13,6 +15,7 @@ import { MySQLAIPanel } from '@/components/db/MySQLAIPanel'
 import { relativeTime } from '@/lib/utils'
 import { settingsApi } from '@/api/settings'
 import { REFETCH_INTERVAL } from '@/lib/constants'
+import { useMySQLLive } from '@/hooks/useMySQLLive'
 
 export default function MySQL() {
   const { data: health, isLoading, error, refetch } = useQuery({
@@ -21,6 +24,13 @@ export default function MySQL() {
     refetchInterval: REFETCH_INTERVAL,
     retry: 1,
   })
+
+  const { snapshot: live, history, connected: liveConnected } = useMySQLLive(!isLoading && !error)
+
+  // Sparkline data from live history
+  const qpsHistory = history.map(s => s.queriesPerSec)
+  const connHistory = history.map(s => s.connections)
+  const threadsHistory = history.map(s => s.threadsRunning)
 
   if (isLoading) return <LoadingState />
   if (error) return <ErrorState message="MySQL monitoring not available. Ensure a mysql check is configured." retry={() => refetch()} />
@@ -36,10 +46,36 @@ export default function MySQL() {
 
   return (
     <div className="space-y-6 animate-fade-in">
+      {/* Long-running query alert */}
+      {live && live.longRunningCount > 0 && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 dark:border-red-900 dark:bg-red-950/40">
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" />
+            </span>
+            <span className="text-sm font-medium text-red-700 dark:text-red-400">
+              {live.longRunningCount} long-running {live.longRunningCount === 1 ? 'query' : 'queries'} detected (&gt;5s)
+            </span>
+            <Link to="/mysql/threads" className="ml-auto text-xs font-medium text-red-600 hover:text-red-700 dark:text-red-400">
+              View details →
+            </Link>
+          </div>
+          {live.longRunning.slice(0, 2).map(p => (
+            <div key={p.id} className="mt-1.5 text-xs text-red-600 dark:text-red-300 font-mono truncate">
+              [{p.id}] {p.user} — {p.info || p.command} ({p.time}s)
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">MySQL Monitoring</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">MySQL Monitoring</h1>
+            <LiveIndicator connected={liveConnected} />
+          </div>
           <p className="text-sm text-slate-500">
             {health.lastSampleAt ? `Last sample ${relativeTime(health.lastSampleAt)}` : 'No samples yet'}
             {' · Click any card for details'}
@@ -58,37 +94,58 @@ export default function MySQL() {
           icon={<Database className="h-5 w-5" />}
           status={statusMap[health.status] || 'neutral'}
         />
-        <ClickableMetricCard
-          to="/mysql/connections"
-          label="Connections"
-          value={`${health.connections}/${health.maxConnections}`}
-          subValue={`${connPct.toFixed(1)}% utilized`}
-          icon={<Users className="h-5 w-5" />}
-          status={connPct > 80 ? 'critical' : connPct > 60 ? 'warning' : 'healthy'}
-        />
-        <ClickableMetricCard
-          to="/mysql/queries"
-          label="Queries/sec"
-          value={health.queriesPerSec.toFixed(1)}
-          subValue={`${formatNumber(health.questions)} total`}
-          icon={<Gauge className="h-5 w-5" />}
-        />
+        <div className="relative">
+          <ClickableMetricCard
+            to="/mysql/connections"
+            label="Connections"
+            value={`${live?.connections ?? health.connections}/${health.maxConnections}`}
+            subValue={`${(live?.connectionUtilPct ?? connPct).toFixed(1)}% utilized`}
+            icon={<Users className="h-5 w-5" />}
+            status={(live?.connectionUtilPct ?? connPct) > 80 ? 'critical' : (live?.connectionUtilPct ?? connPct) > 60 ? 'warning' : 'healthy'}
+          />
+          {connHistory.length > 3 && (
+            <div className="absolute bottom-1 left-5 right-14">
+              <Sparkline data={connHistory} color="#6366f1" height={24} />
+            </div>
+          )}
+        </div>
+        <div className="relative">
+          <ClickableMetricCard
+            to="/mysql/queries"
+            label="Queries/sec"
+            value={(live?.queriesPerSec ?? health.queriesPerSec).toFixed(1)}
+            subValue={`${formatNumber(health.questions)} total`}
+            icon={<Gauge className="h-5 w-5" />}
+          />
+          {qpsHistory.length > 3 && (
+            <div className="absolute bottom-1 left-5 right-14">
+              <Sparkline data={qpsHistory} color="#3b82f6" height={24} />
+            </div>
+          )}
+        </div>
         <ClickableMetricCard
           to="/mysql/queries?filter=slow"
           label="Slow Queries"
-          value={health.totalSlowQueries}
+          value={live?.slowQueries ?? health.totalSlowQueries}
           subValue={health.slowQueries > 0 ? `${health.slowQueries.toFixed(2)}/sec` : 'None recent'}
           icon={<Clock className="h-5 w-5" />}
-          status={health.totalSlowQueries > 0 ? 'warning' : 'neutral'}
+          status={(live?.slowQueries ?? health.totalSlowQueries) > 0 ? 'warning' : 'neutral'}
         />
-        <ClickableMetricCard
-          to="/mysql/threads"
-          label="Active Threads"
-          value={(health.processList || []).filter((p: { command: string }) => p.command !== 'Sleep' && p.command !== 'Daemon').length}
-          subValue={`${(health.processList || []).length} total processes`}
-          icon={<Activity className="h-5 w-5" />}
-          status={(health.processList || []).filter((p: { command: string }) => p.command !== 'Sleep' && p.command !== 'Daemon').length > 10 ? 'warning' : 'neutral'}
-        />
+        <div className="relative">
+          <ClickableMetricCard
+            to="/mysql/threads"
+            label="Active Threads"
+            value={live?.activeQueries ?? (health.processList || []).filter((p: { command: string }) => p.command !== 'Sleep' && p.command !== 'Daemon').length}
+            subValue={`${live?.threadsRunning ?? health.threadsRunning} running`}
+            icon={<Activity className="h-5 w-5" />}
+            status={(live?.activeQueries ?? (health.processList || []).filter((p: { command: string }) => p.command !== 'Sleep' && p.command !== 'Daemon').length) > 10 ? 'warning' : 'neutral'}
+          />
+          {threadsHistory.length > 3 && (
+            <div className="absolute bottom-1 left-5 right-14">
+              <Sparkline data={threadsHistory} color="#f59e0b" height={24} />
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Connection utilization bar + quick preview */}

@@ -1,10 +1,15 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Skull, Loader2, CheckCircle } from 'lucide-react'
 import { mysqlApi } from '@/api/mysql'
 import { DetailPageLayout } from '@/components/db/DetailPageLayout'
+import { LiveIndicator } from '@/components/db/LiveIndicator'
+import { Sparkline } from '@/components/charts/Sparkline'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { cn } from '@/lib/utils'
 import { REFETCH_INTERVAL } from '@/lib/constants'
+import { useMySQLLive } from '@/hooks/useMySQLLive'
 import type { MySQLProcess } from '@/types'
 
 export default function MySQLThreads() {
@@ -14,23 +19,73 @@ export default function MySQLThreads() {
     refetchInterval: REFETCH_INTERVAL,
   })
 
+  const { snapshot: live, history, connected: liveConnected } = useMySQLLive(!isLoading && !error)
+  const [killingId, setKillingId] = useState<number | null>(null)
+  const [killedIds, setKilledIds] = useState<Set<number>>(new Set())
+
   if (isLoading) return <LoadingState />
   if (error) return <ErrorState message="Failed to load thread data" retry={() => refetch()} />
   if (!health) return null
 
-  const processList: MySQLProcess[] = health.processList || []
+  const processList: MySQLProcess[] = live?.processList ?? health.processList ?? []
   const activeThreads = processList.filter(p => p.command !== 'Sleep' && p.command !== 'Daemon')
   const sleepingThreads = processList.filter(p => p.command === 'Sleep')
-  const longRunning = processList.filter(p => p.time > 5 && p.command !== 'Daemon')
+  const longRunning = live?.longRunning ?? processList.filter(p => p.time > 5 && p.command !== 'Daemon')
+  const threadsHistory = history.map(s => s.threadsRunning)
+
+  const handleKill = async (processId: number) => {
+    if (!confirm(`Kill query on process ${processId}?`)) return
+    setKillingId(processId)
+    try {
+      await mysqlApi.killQuery(processId)
+      setKilledIds(prev => new Set(prev).add(processId))
+      setTimeout(() => setKilledIds(prev => { const n = new Set(prev); n.delete(processId); return n }), 5000)
+    } catch { /* ignore */ }
+    setKillingId(null)
+  }
+
+  const KillButton = ({ processId }: { processId: number }) => {
+    if (killedIds.has(processId)) return <span className="inline-flex items-center gap-1 text-xs text-emerald-600"><CheckCircle className="h-3 w-3" /> Killed</span>
+    return (
+      <button onClick={() => handleKill(processId)} disabled={killingId === processId}
+        className="inline-flex items-center gap-1 rounded bg-red-100 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-200 disabled:opacity-50 dark:bg-red-900 dark:text-red-300">
+        {killingId === processId ? <><Loader2 className="h-3 w-3 animate-spin" /> Killing</> : <><Skull className="h-3 w-3" /> Kill</>}
+      </button>
+    )
+  }
 
   return (
     <DetailPageLayout backTo="/mysql" backLabel="Back to MySQL" title="Threads & Processes" subtitle={`${activeThreads.length} active · ${sleepingThreads.length} sleeping · ${processList.length} total`}>
-      {/* Summary */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      {/* Long-running query alerts */}
+      {longRunning.length > 0 && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 dark:border-red-900 dark:bg-red-950/40">
+          <div className="flex items-center gap-2 text-sm font-medium text-red-700 dark:text-red-400">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" />
+            </span>
+            {longRunning.length} long-running {longRunning.length === 1 ? 'query' : 'queries'} detected (&gt;5s) — consider killing or optimizing
+          </div>
+        </div>
+      )}
+
+      {/* Summary + sparkline */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         <StatCard label="Total Processes" value={processList.length} />
         <StatCard label="Active" value={activeThreads.length} warn={activeThreads.length > 10} />
         <StatCard label="Sleeping" value={sleepingThreads.length} />
         <StatCard label="Long Running (>5s)" value={longRunning.length} warn={longRunning.length > 0} />
+        <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs font-medium text-slate-500">Threads Running</span>
+            <LiveIndicator connected={liveConnected} />
+          </div>
+          {threadsHistory.length > 3 ? (
+            <Sparkline data={threadsHistory} color="#f59e0b" height={36} />
+          ) : (
+            <p className="text-lg font-bold text-slate-900 dark:text-slate-100">{live?.threadsRunning ?? health.threadsRunning}</p>
+          )}
+        </div>
       </div>
 
       {/* Long-running queries first */}
@@ -49,6 +104,7 @@ export default function MySQLThreads() {
                   <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-amber-600">Time</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-amber-600">State</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-amber-600">Query</th>
+                  <th className="px-4 py-2.5 text-center text-xs font-semibold uppercase text-amber-600">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-amber-100 dark:divide-amber-900/50">
@@ -62,6 +118,7 @@ export default function MySQLThreads() {
                     <td className="px-4 py-2.5 max-w-md">
                       {p.info ? <code className="block whitespace-pre-wrap break-all rounded bg-amber-100 px-2 py-1 text-xs dark:bg-amber-900/30">{p.info}</code> : '—'}
                     </td>
+                    <td className="px-4 py-2.5 text-center"><KillButton processId={p.id} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -87,6 +144,7 @@ export default function MySQLThreads() {
                   <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-slate-500">Time</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-slate-500">State</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-slate-500">Query</th>
+                  <th className="px-4 py-2.5 text-center text-xs font-semibold uppercase text-slate-500">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -99,6 +157,7 @@ export default function MySQLThreads() {
                     <td className={cn('px-4 py-2.5 font-mono text-xs', p.time > 5 ? 'text-amber-600 font-semibold' : 'text-slate-500')}>{p.time}s</td>
                     <td className="px-4 py-2.5 text-xs text-slate-500">{p.state || '—'}</td>
                     <td className="px-4 py-2.5 max-w-sm">{p.info ? <code className="block truncate rounded bg-slate-50 px-2 py-1 text-xs dark:bg-slate-800" title={p.info}>{p.info}</code> : '—'}</td>
+                    <td className="px-4 py-2.5 text-center"><KillButton processId={p.id} /></td>
                   </tr>
                 ))}
               </tbody>

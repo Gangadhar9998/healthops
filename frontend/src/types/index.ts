@@ -522,3 +522,19 @@ export interface MySQLHealthCard {
   openedTables: number
   connectionsRefused: number
 }
+
+export interface MySQLLiveSnapshot {
+  timestamp: string
+  connections: number
+  maxConnections: number
+  connectionUtilPct: number
+  threadsRunning: number
+  threadsConnected: number
+  queriesPerSec: number
+  slowQueries: number
+  uptimeSeconds: number
+  processList: MySQLProcess[]
+  longRunning: MySQLProcess[]
+  activeQueries: number
+  longRunningCount: number
+}

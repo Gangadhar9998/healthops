@@ -10,6 +10,11 @@ export interface MySQLAIResponse {
   answeredAt: string
 }
 
+export interface KillQueryResponse {
+  processId: number
+  status: string
+}
+
 export const mysqlApi = {
   health: () => api.get<MySQLHealthCard>('/mysql/health'),
   samples: (params?: { limit?: number }) => {
@@ -27,6 +32,8 @@ export const mysqlApi = {
     const q = qs.toString()
     return api.get<unknown[]>(`/mysql/timeseries${q ? `?${q}` : ''}`)
   },
+  killQuery: (processId: number, checkId?: string) =>
+    api.post<KillQueryResponse>('/mysql/kill', { processId, checkId: checkId || '' }),
   aiAsk: (question?: string, providerId?: string) =>
     api.post<MySQLAIResponse>('/mysql/ai/ask', { question: question || '', providerId: providerId || '' }),
 }
