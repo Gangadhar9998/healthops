@@ -12,6 +12,8 @@ import { cn, relativeTime, incidentStatusLabel, severityColor } from '@/lib/util
 import { settingsApi } from '@/api/settings'
 import { analyticsApi } from '@/api/analytics'
 import { REFETCH_INTERVAL } from '@/lib/constants'
+import { useLiveSummary } from '@/hooks/useLiveSummary'
+import { LiveIndicator } from '@/components/db/LiveIndicator'
 
 export default function Incidents() {
   const [statusFilter, setStatusFilter] = useState<string>('')
@@ -28,6 +30,8 @@ export default function Incidents() {
     queryFn: analyticsApi.incidents,
   })
 
+  const live = useLiveSummary(!isLoading && !error)
+
   if (isLoading) return <LoadingState />
   if (error) return <ErrorState message={error.message} retry={() => refetch()} />
 
@@ -36,7 +40,10 @@ export default function Incidents() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">Incidents</h1>
-          <p className="text-sm text-slate-500">{incidents?.total ?? 0} incidents</p>
+          <p className="flex items-center gap-2 text-sm text-slate-500">
+            <span>{incidents?.total ?? 0} incidents</span>
+            <LiveIndicator connected={live.connected} />
+          </p>
         </div>
         <ExportButton downloadUrl={settingsApi.exportIncidents('csv')} />
       </div>
@@ -45,7 +52,7 @@ export default function Incidents() {
       {stats && (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
           <MetricCard label="Total" value={stats.total} />
-          <MetricCard label="Open" value={stats.open} className={stats.open > 0 ? 'ring-1 ring-red-200 dark:ring-red-900' : ''} />
+          <MetricCard label="Open" value={live.connected ? live.activeIncidents : (stats?.open ?? 0)} className={(live.connected ? live.activeIncidents : (stats?.open ?? 0)) > 0 ? 'ring-1 ring-red-200 dark:ring-red-900' : ''} />
           <MetricCard label="Acknowledged" value={stats.acknowledged} />
           <MetricCard label="MTTA" value={stats.mttaMinutes > 0 ? `${stats.mttaMinutes.toFixed(0)}m` : '—'} subValue="Mean time to acknowledge" />
           <MetricCard label="MTTR" value={stats.mttrMinutes > 0 ? `${stats.mttrMinutes.toFixed(0)}m` : '—'} subValue="Mean time to resolve" />

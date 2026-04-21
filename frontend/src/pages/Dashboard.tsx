@@ -22,6 +22,8 @@ import { StatusDistribution } from '@/components/charts/StatusDistribution'
 import { cn, relativeTime, formatDuration, formatUptime, checkTypeLabel } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { REFETCH_INTERVAL } from '@/lib/constants'
+import { useLiveSummary } from '@/hooks/useLiveSummary'
+import { LiveIndicator } from '@/components/db/LiveIndicator'
 import type { CheckConfig, CheckResult, RemoteServer, StatusCount, ServerSnapshot, Incident } from '@/types'
 
 const PERIOD_OPTIONS = [
@@ -44,6 +46,8 @@ export default function Dashboard() {
     queryFn: dashboardApi.snapshot,
     refetchInterval: REFETCH_INTERVAL,
   })
+
+  const live = useLiveSummary(!isLoading && !error)
 
   const { data: checks } = useQuery({
     queryKey: ['checks'],
@@ -120,7 +124,8 @@ export default function Dashboard() {
   if (error) return <ErrorState message={error.message} retry={() => refetch()} />
   if (!dashboard) return null
 
-  const { summary } = dashboard
+  // Prefer live SSE summary (5s) over polled dashboard (30s)
+  const summary = live.summary ?? dashboard.summary
   const serverMetrics = metricsQueries.data ?? {}
 
   const healthPct = summary.enabledChecks > 0
@@ -141,18 +146,21 @@ export default function Dashboard() {
     inc => new Date(inc.startedAt) >= periodStart
   ) ?? []
   const resolvedInPeriod = periodIncidents.filter(i => i.status === 'resolved').length
-  const openCount = incidents?.items.length ?? 0
+  const openCount = live.connected ? live.activeIncidents : (incidents?.items.length ?? 0)
 
-  // Build latest result map
-  const latestByCheck = new Map<string, CheckResult>()
-  if (results) {
-    for (const r of results) {
-      const existing = latestByCheck.get(r.checkId)
-      if (!existing || new Date(r.finishedAt) > new Date(existing.finishedAt)) {
-        latestByCheck.set(r.checkId, r)
+  // Build latest result map — prefer live SSE data
+  const latestByCheck = live.latestByCheck.size > 0 ? live.latestByCheck : (() => {
+    const map = new Map<string, CheckResult>()
+    if (results) {
+      for (const r of results) {
+        const existing = map.get(r.checkId)
+        if (!existing || new Date(r.finishedAt) > new Date(existing.finishedAt)) {
+          map.set(r.checkId, r)
+        }
       }
     }
-  }
+    return map
+  })()
 
   // Build uptime map by check ID
   const uptimeByCheck = new Map<string, number>()
@@ -227,6 +235,7 @@ export default function Dashboard() {
                 <span>Last check {relativeTime(summary.lastRunAt)}</span>
               </>
             )}
+            <LiveIndicator connected={live.connected} />
           </div>
         </div>
         <div className="flex items-center gap-2">

@@ -12,6 +12,8 @@ import { useToast } from '@/components/Toast'
 import { cn, formatDuration, relativeTime, checkTypeLabel } from '@/lib/utils'
 import { settingsApi } from '@/api/settings'
 import { REFETCH_INTERVAL, CHECK_TYPES } from '@/lib/constants'
+import { useLiveSummary } from '@/hooks/useLiveSummary'
+import { LiveIndicator } from '@/components/db/LiveIndicator'
 import { useExport } from '@/hooks/useExport'
 import type { CheckConfig, CheckResult } from '@/types'
 
@@ -56,6 +58,8 @@ export default function Checks() {
     refetchInterval: REFETCH_INTERVAL,
   })
 
+  const live = useLiveSummary(!isLoading && !error)
+
   const { exportCSV } = useExport()
 
   // Derive unique server names for filter dropdown (must be before early returns)
@@ -72,16 +76,19 @@ export default function Checks() {
   if (error) return <ErrorState message={error.message} retry={() => refetch()} />
   if (!checks || checks.length === 0) return <EmptyState title="No checks configured" description="Add your first health check to start monitoring." />
 
-  // Build a map of latest result per check
-  const latestByCheck = new Map<string, CheckResult>()
-  if (results) {
-    for (const r of results) {
-      const existing = latestByCheck.get(r.checkId)
-      if (!existing || new Date(r.finishedAt) > new Date(existing.finishedAt)) {
-        latestByCheck.set(r.checkId, r)
+  // Build a map of latest result per check — prefer live SSE data
+  const latestByCheck = live.latestByCheck.size > 0 ? live.latestByCheck : (() => {
+    const map = new Map<string, CheckResult>()
+    if (results) {
+      for (const r of results) {
+        const existing = map.get(r.checkId)
+        if (!existing || new Date(r.finishedAt) > new Date(existing.finishedAt)) {
+          map.set(r.checkId, r)
+        }
       }
     }
-  }
+    return map
+  })()
 
   // Filter
   let filtered = checks.filter((c: CheckConfig) => {
@@ -137,7 +144,10 @@ export default function Checks() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">Checks</h1>
-          <p className="text-sm text-slate-500">{checks.length} total, {filtered.length} shown</p>
+          <p className="flex items-center gap-2 text-sm text-slate-500">
+            <span>{checks.length} total, {filtered.length} shown</span>
+            <LiveIndicator connected={live.connected} />
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <button

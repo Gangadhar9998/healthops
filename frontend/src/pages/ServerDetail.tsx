@@ -14,8 +14,11 @@ import { serversApi } from '@/api/servers'
 import { MetricCard } from '@/components/MetricCard'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
+import { LiveIndicator } from '@/components/db/LiveIndicator'
+import { Sparkline } from '@/components/charts/Sparkline'
 import { cn } from '@/lib/utils'
 import { REFETCH_INTERVAL, CHART_COLORS } from '@/lib/constants'
+import { useServerLive } from '@/hooks/useServerLive'
 import type { MetricsPoint } from '@/types'
 
 type TimeRange = '1h' | '6h' | '12h' | '24h' | '7d'
@@ -56,6 +59,8 @@ export default function ServerDetail() {
     enabled: !!id,
   })
 
+  const { snapshot: liveSnap, history: liveHistory, connected: liveConnected } = useServerLive(id, !metricsLoading && !metricsError)
+
   if (serverLoading || metricsLoading) return <LoadingState />
   if (metricsError) {
     return (
@@ -77,7 +82,13 @@ export default function ServerDetail() {
     else { setSortField(field); setSortDir('desc') }
   }
 
-  const sortedProcesses = [...(snapshot?.topProcesses || [])].sort((a, b) => {
+  // Prefer live SSE snapshot over polled
+  const s = liveSnap ?? snapshot
+  const cpuHistory = liveHistory.map(h => h.cpuPercent)
+  const memHistory = liveHistory.map(h => h.memoryPercent)
+  const loadHistory = liveHistory.map(h => h.loadAvg1)
+
+  const sortedProcesses = [...(s?.topProcesses || [])].sort((a, b) => {
     const mul = sortDir === 'desc' ? -1 : 1
     return mul * (a[sortField] - b[sortField])
   })
@@ -88,10 +99,10 @@ export default function ServerDetail() {
     date: format(new Date(p.timestamp), 'MMM d, HH:mm'),
   }))
 
-  const uptimeStr = snapshot
-    ? snapshot.uptimeHours >= 24
-      ? `${Math.floor(snapshot.uptimeHours / 24)}d ${Math.floor(snapshot.uptimeHours % 24)}h`
-      : `${Math.floor(snapshot.uptimeHours)}h ${Math.floor((snapshot.uptimeHours % 1) * 60)}m`
+  const uptimeStr = s
+    ? s.uptimeHours >= 24
+      ? `${Math.floor(s.uptimeHours / 24)}d ${Math.floor(s.uptimeHours % 24)}h`
+      : `${Math.floor(s.uptimeHours)}h ${Math.floor((s.uptimeHours % 1) * 60)}m`
     : '-'
 
   const gaugeColor = (pct: number) =>
@@ -115,8 +126,9 @@ export default function ServerDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <LiveIndicator connected={liveConnected} />
           <span className="text-xs text-slate-400">
-            Last updated: {snapshot ? format(new Date(snapshot.timestamp), 'MMM d, HH:mm:ss') : '-'}
+            Last updated: {s ? format(new Date(s.timestamp), 'MMM d, HH:mm:ss') : '-'}
           </span>
           <button
             onClick={() => refetch()}
@@ -128,31 +140,40 @@ export default function ServerDetail() {
       </div>
 
       {/* System metrics cards */}
-      {snapshot && (
+      {s && (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-          <MetricCard
-            label="CPU"
-            value={`${snapshot.cpuPercent.toFixed(1)}%`}
-            icon={<Cpu className={cn('h-5 w-5', gaugeColor(snapshot.cpuPercent))} />}
-          />
-          <MetricCard
-            label="Memory"
-            value={`${snapshot.memoryPercent.toFixed(1)}%`}
-            subValue={`${snapshot.memoryUsedMB.toFixed(0)} / ${snapshot.memoryTotalMB.toFixed(0)} MB`}
-            icon={<MemoryStick className={cn('h-5 w-5', gaugeColor(snapshot.memoryPercent))} />}
-          />
+          <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-center gap-2 mb-1">
+              <Cpu className={cn('h-4 w-4', gaugeColor(s.cpuPercent))} />
+              <span className="text-xs font-medium text-slate-500">CPU</span>
+            </div>
+            <p className="text-2xl font-bold tabular-nums text-slate-900 dark:text-slate-100">{s.cpuPercent.toFixed(1)}%</p>
+            {cpuHistory.length > 3 && <Sparkline data={cpuHistory} color="#3b82f6" height={28} />}
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-center gap-2 mb-1">
+              <MemoryStick className={cn('h-4 w-4', gaugeColor(s.memoryPercent))} />
+              <span className="text-xs font-medium text-slate-500">Memory</span>
+            </div>
+            <p className="text-2xl font-bold tabular-nums text-slate-900 dark:text-slate-100">{s.memoryPercent.toFixed(1)}%</p>
+            <p className="text-[10px] text-slate-400 tabular-nums">{s.memoryUsedMB.toFixed(0)} / {s.memoryTotalMB.toFixed(0)} MB</p>
+            {memHistory.length > 3 && <Sparkline data={memHistory} color="#8b5cf6" height={28} />}
+          </div>
           <MetricCard
             label="Disk"
-            value={`${snapshot.diskPercent.toFixed(1)}%`}
-            subValue={`${snapshot.diskUsedGB.toFixed(1)} / ${snapshot.diskTotalGB.toFixed(1)} GB`}
-            icon={<HardDrive className={cn('h-5 w-5', gaugeColor(snapshot.diskPercent))} />}
+            value={`${s.diskPercent.toFixed(1)}%`}
+            subValue={`${s.diskUsedGB.toFixed(1)} / ${s.diskTotalGB.toFixed(1)} GB`}
+            icon={<HardDrive className={cn('h-5 w-5', gaugeColor(s.diskPercent))} />}
           />
-          <MetricCard
-            label="Load Avg"
-            value={snapshot.loadAvg1.toFixed(2)}
-            subValue={`${snapshot.loadAvg5.toFixed(2)} / ${snapshot.loadAvg15.toFixed(2)}`}
-            icon={<Activity className="h-5 w-5 text-blue-500" />}
-          />
+          <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-center gap-2 mb-1">
+              <Activity className="h-4 w-4 text-blue-500" />
+              <span className="text-xs font-medium text-slate-500">Load Avg</span>
+            </div>
+            <p className="text-2xl font-bold tabular-nums text-slate-900 dark:text-slate-100">{s.loadAvg1.toFixed(2)}</p>
+            <p className="text-[10px] text-slate-400 tabular-nums">{s.loadAvg5.toFixed(2)} / {s.loadAvg15.toFixed(2)}</p>
+            {loadHistory.length > 3 && <Sparkline data={loadHistory} color="#f59e0b" height={28} />}
+          </div>
           <MetricCard
             label="Uptime"
             value={uptimeStr}
@@ -245,13 +266,16 @@ export default function ServerDetail() {
       </div>
 
       {/* Top processes table */}
-      {snapshot?.topProcesses && snapshot.topProcesses.length > 0 && (
+      {s?.topProcesses && s.topProcesses.length > 0 && (
         <div className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-          <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
-            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-              Top Processes
-            </h2>
-            <p className="mt-0.5 text-xs text-slate-500">Sorted by memory usage</p>
+          <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                Top Processes
+              </h2>
+              <p className="mt-0.5 text-xs text-slate-500">Sorted by memory usage</p>
+            </div>
+            <LiveIndicator connected={liveConnected} />
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">

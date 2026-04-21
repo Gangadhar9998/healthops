@@ -13,6 +13,8 @@ import { ErrorState } from '@/components/ErrorState'
 import { useToast } from '@/components/Toast'
 import { cn, checkTypeLabel, formatDuration } from '@/lib/utils'
 import { REFETCH_INTERVAL } from '@/lib/constants'
+import { useLiveSummary } from '@/hooks/useLiveSummary'
+import { LiveIndicator } from '@/components/db/LiveIndicator'
 import type { RemoteServer, CheckConfig, CheckResult, StatusCount } from '@/types'
 
 export default function Servers() {
@@ -50,23 +52,29 @@ export default function Servers() {
     onError: (e: Error) => toast.error(e.message),
   })
 
+  const live = useLiveSummary(!dashLoading && !dashError)
+
   if (dashLoading) return <LoadingState />
   if (dashError) return <ErrorState message={dashError.message} retry={() => dashRefetch()} />
   if (!dashboard) return null
 
-  const { summary } = dashboard
+  // Prefer live SSE summary over polled dashboard
+  const summary = live.summary ?? dashboard.summary
   const byServer = summary.byServer
 
-  // Build latest result map
-  const latestByCheck = new Map<string, CheckResult>()
-  if (results) {
-    for (const r of results) {
-      const existing = latestByCheck.get(r.checkId)
-      if (!existing || new Date(r.finishedAt) > new Date(existing.finishedAt)) {
-        latestByCheck.set(r.checkId, r)
+  // Build latest result map — prefer live SSE data
+  const latestByCheck = live.latestByCheck.size > 0 ? live.latestByCheck : (() => {
+    const map = new Map<string, CheckResult>()
+    if (results) {
+      for (const r of results) {
+        const existing = map.get(r.checkId)
+        if (!existing || new Date(r.finishedAt) > new Date(existing.finishedAt)) {
+          map.set(r.checkId, r)
+        }
       }
     }
-  }
+    return map
+  })()
 
   // Map remote servers by id for lookup
   const remoteById = new Map<string, RemoteServer>()
@@ -115,9 +123,12 @@ export default function Servers() {
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">Servers</h1>
-          <p className="text-sm text-slate-500">
-            {Object.keys(byServer).length} server group{Object.keys(byServer).length !== 1 ? 's' : ''}
-            {remoteServers && remoteServers.length > 0 && ` · ${remoteServers.length} remote`}
+          <p className="flex items-center gap-2 text-sm text-slate-500">
+            <span>
+              {Object.keys(byServer).length} server group{Object.keys(byServer).length !== 1 ? 's' : ''}
+              {remoteServers && remoteServers.length > 0 && ` · ${remoteServers.length} remote`}
+            </span>
+            <LiveIndicator connected={live.connected} />
           </p>
         </div>
         <Link

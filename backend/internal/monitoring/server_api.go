@@ -191,6 +191,12 @@ func (s *Service) handleServerByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Handle /api/v1/servers/{id}/live (SSE)
+	if strings.HasSuffix(path, "/live") {
+		s.handleServerLive(w, r)
+		return
+	}
+
 	// Handle /api/v1/servers/{id}/test
 	if strings.HasSuffix(path, "/test") {
 		s.handleServerTest(w, r)
