@@ -1,11 +1,11 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import {
   Activity, AlertTriangle, Clock, Server, Monitor, Wifi,
   ArrowRight, Play, TrendingUp, Shield, CheckCircle2,
   XCircle, HelpCircle, Calendar, ChevronDown, ChevronRight,
-  Cpu, HardDrive, MemoryStick, Gauge,
+  Cpu, HardDrive, MemoryStick, Gauge, RefreshCw,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { dashboardApi } from '@/api/dashboard'
@@ -20,6 +20,7 @@ import { ErrorState } from '@/components/ErrorState'
 import { ResponseTimeChart } from '@/components/charts/ResponseTimeChart'
 import { StatusDistribution } from '@/components/charts/StatusDistribution'
 import { cn, relativeTime, formatDuration, formatUptime, checkTypeLabel } from '@/lib/utils'
+import { useToast } from '@/components/Toast'
 import { REFETCH_INTERVAL } from '@/lib/constants'
 import type { CheckConfig, CheckResult, RemoteServer, StatusCount, ServerSnapshot, Incident } from '@/types'
 
@@ -34,6 +35,9 @@ type Period = typeof PERIOD_OPTIONS[number]['value']
 export default function Dashboard() {
   const [period, setPeriod] = useState<Period>('24h')
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set())
+  const [runningChecks, setRunningChecks] = useState(false)
+  const queryClient = useQueryClient()
+  const toast = useToast()
 
   const { data: dashboard, isLoading, error, refetch } = useQuery({
     queryKey: ['dashboard'],
@@ -244,11 +248,35 @@ export default function Dashboard() {
             ))}
           </div>
           <button
-            onClick={() => dashboardApi.runNow().then(() => refetch())}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+            onClick={async () => {
+              if (runningChecks) return
+              setRunningChecks(true)
+              try {
+                const result = await dashboardApi.runNow()
+                toast.success(`Checks completed: ${result.summary.healthy} healthy, ${result.summary.warning} warning, ${result.summary.critical} critical`)
+                queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+                queryClient.invalidateQueries({ queryKey: ['checks'] })
+                queryClient.invalidateQueries({ queryKey: ['results'] })
+                queryClient.invalidateQueries({ queryKey: ['incidents'] })
+                queryClient.invalidateQueries({ queryKey: ['analytics'] })
+              } catch (e: any) {
+                toast.error(e.message || 'Failed to run checks')
+              } finally {
+                setRunningChecks(false)
+              }
+            }}
+            disabled={runningChecks}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium text-white transition-colors',
+              runningChecks ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700',
+            )}
           >
-            <Play className="h-3.5 w-3.5" />
-            Run Now
+            {runningChecks ? (
+              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Play className="h-3.5 w-3.5" />
+            )}
+            {runningChecks ? 'Running...' : 'Run Now'}
           </button>
         </div>
       </div>

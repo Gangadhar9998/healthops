@@ -20,7 +20,11 @@ export const analyticsApi = {
   statusTimeline: (params?: { checkId?: string; period?: string }) => {
     const qs = new URLSearchParams()
     if (params?.checkId) qs.set('checkId', params.checkId)
-    if (params?.period) qs.set('period', params.period)
+    // Backend uses 'days' integer, not 'period' string
+    if (params?.period) {
+      const days = params.period === '24h' ? '1' : params.period === '7d' ? '7' : params.period === '30d' ? '30' : '7'
+      qs.set('days', days)
+    }
     const q = qs.toString()
     return api.get<StatusTimelineEntry[]>(`/analytics/status-timeline${q ? `?${q}` : ''}`)
   },

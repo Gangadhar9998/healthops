@@ -280,6 +280,8 @@ export interface ResponseTimeBucket {
 
 export interface StatusTimelineEntry {
   timestamp: string
+  checkId?: string
+  checkName?: string
   status: string
   durationMs: number
   message?: string

@@ -40,6 +40,8 @@ type ResponseTimeBucket struct {
 // StatusTimelineEntry for timeline visualization
 type StatusTimelineEntry struct {
 	Timestamp  time.Time `json:"timestamp"`
+	CheckID    string    `json:"checkId,omitempty"`
+	CheckName  string    `json:"checkName,omitempty"`
 	Status     string    `json:"status"`
 	DurationMs int64     `json:"durationMs"`
 	Message    string    `json:"message,omitempty"`
@@ -354,6 +356,8 @@ func (s *Service) handleAnalyticsStatusTimeline(w http.ResponseWriter, r *http.R
 		}
 		timeline = append(timeline, StatusTimelineEntry{
 			Timestamp:  res.StartedAt,
+			CheckID:    res.CheckID,
+			CheckName:  res.Name,
 			Status:     res.Status,
 			DurationMs: res.DurationMs,
 			Message:    res.Message,
