@@ -9,6 +9,26 @@
   "checkIntervalSeconds": 30,
   "workers": 8,
   "allowCommandChecks": true,
+  "servers": [
+    {
+      "id": "docker-linux-1",
+      "name": "Docker Test Linux 1",
+      "host": "localhost",
+      "port": 2222,
+      "user": "root",
+      "password": "testpass123",
+      "tags": ["linux", "docker", "test"]
+    },
+    {
+      "id": "docker-linux-2",
+      "name": "Docker Test Linux 2",
+      "host": "localhost",
+      "port": 2223,
+      "user": "root",
+      "password": "testpass123",
+      "tags": ["linux", "docker", "test"]
+    }
+  ],
   "checks": [
     {
       "id": "self-health",
@@ -90,6 +110,23 @@
       }
     },
     {
+      "id": "ssh-docker-test-linux-1",
+      "name": "Docker Test Linux 1",
+      "type": "ssh",
+      "server": "docker-test-linux-1",
+      "application": "linux",
+      "timeoutSeconds": 10,
+      "intervalSeconds": 30,
+      "enabled": true,
+      "tags": ["ssh", "linux", "docker"],
+      "ssh": {
+        "host": "localhost",
+        "port": 2222,
+        "user": "root",
+        "password": "testpass123"
+      }
+    },
+    {
       "id": "ssh-docker-test-linux-2",
       "name": "Docker Test Linux 2",
       "type": "ssh",
@@ -105,6 +142,71 @@
         "user": "root",
         "password": "testpass123"
       }
+    },
+    {
+      "id": "nginx-linux-1",
+      "name": "Nginx on Linux 1",
+      "type": "process",
+      "server": "docker-linux-1",
+      "application": "nginx",
+      "target": "nginx",
+      "serverId": "docker-linux-1",
+      "timeoutSeconds": 5,
+      "intervalSeconds": 30,
+      "enabled": true,
+      "tags": ["process", "nginx", "docker"]
+    },
+    {
+      "id": "python-http-linux-1",
+      "name": "Python HTTP Server on Linux 1",
+      "type": "process",
+      "server": "docker-linux-1",
+      "application": "python",
+      "target": "http.server",
+      "serverId": "docker-linux-1",
+      "timeoutSeconds": 5,
+      "intervalSeconds": 30,
+      "enabled": true,
+      "tags": ["process", "python", "docker"]
+    },
+    {
+      "id": "cron-linux-1",
+      "name": "Cron Daemon on Linux 1",
+      "type": "process",
+      "server": "docker-linux-1",
+      "application": "system",
+      "target": "cron",
+      "serverId": "docker-linux-1",
+      "timeoutSeconds": 5,
+      "intervalSeconds": 30,
+      "enabled": true,
+      "tags": ["process", "cron", "docker"]
+    },
+    {
+      "id": "nginx-linux-2",
+      "name": "Nginx on Linux 2",
+      "type": "process",
+      "server": "docker-linux-2",
+      "application": "nginx",
+      "target": "nginx",
+      "serverId": "docker-linux-2",
+      "timeoutSeconds": 5,
+      "intervalSeconds": 30,
+      "enabled": true,
+      "tags": ["process", "nginx", "docker"]
+    },
+    {
+      "id": "python-http-linux-2",
+      "name": "Python HTTP Server on Linux 2",
+      "type": "process",
+      "server": "docker-linux-2",
+      "application": "python",
+      "target": "http.server",
+      "serverId": "docker-linux-2",
+      "timeoutSeconds": 5,
+      "intervalSeconds": 30,
+      "enabled": true,
+      "tags": ["process", "python", "docker"]
     }
   ]
 }

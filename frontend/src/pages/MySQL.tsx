@@ -94,35 +94,23 @@ export default function MySQL() {
           icon={<Database className="h-5 w-5" />}
           status={statusMap[health.status] || 'neutral'}
         />
-        <div className="relative">
-          <ClickableMetricCard
-            to="/mysql/connections"
-            label="Connections"
-            value={`${live?.connections ?? health.connections}/${health.maxConnections}`}
-            subValue={`${(live?.connectionUtilPct ?? connPct).toFixed(1)}% utilized`}
-            icon={<Users className="h-5 w-5" />}
-            status={(live?.connectionUtilPct ?? connPct) > 80 ? 'critical' : (live?.connectionUtilPct ?? connPct) > 60 ? 'warning' : 'healthy'}
-          />
-          {connHistory.length > 3 && (
-            <div className="absolute bottom-1 left-5 right-14">
-              <Sparkline data={connHistory} color="#6366f1" height={24} />
-            </div>
-          )}
-        </div>
-        <div className="relative">
-          <ClickableMetricCard
-            to="/mysql/queries"
-            label="Queries/sec"
-            value={(live?.queriesPerSec ?? health.queriesPerSec).toFixed(1)}
-            subValue={`${formatNumber(health.questions)} total`}
-            icon={<Gauge className="h-5 w-5" />}
-          />
-          {qpsHistory.length > 3 && (
-            <div className="absolute bottom-1 left-5 right-14">
-              <Sparkline data={qpsHistory} color="#3b82f6" height={24} />
-            </div>
-          )}
-        </div>
+        <ClickableMetricCard
+          to="/mysql/connections"
+          label="Connections"
+          value={`${live?.connections ?? health.connections}/${health.maxConnections}`}
+          subValue={`${(live?.connectionUtilPct ?? connPct).toFixed(1)}% utilized`}
+          icon={<Users className="h-5 w-5" />}
+          status={(live?.connectionUtilPct ?? connPct) > 80 ? 'critical' : (live?.connectionUtilPct ?? connPct) > 60 ? 'warning' : 'healthy'}
+          footer={connHistory.length > 3 ? <Sparkline data={connHistory} color="#6366f1" height={24} /> : undefined}
+        />
+        <ClickableMetricCard
+          to="/mysql/queries"
+          label="Queries/sec"
+          value={(live?.queriesPerSec ?? health.queriesPerSec).toFixed(1)}
+          subValue={`${formatNumber(health.questions)} total`}
+          icon={<Gauge className="h-5 w-5" />}
+          footer={qpsHistory.length > 3 ? <Sparkline data={qpsHistory} color="#3b82f6" height={24} /> : undefined}
+        />
         <ClickableMetricCard
           to="/mysql/queries?filter=slow"
           label="Slow Queries"
@@ -131,21 +119,15 @@ export default function MySQL() {
           icon={<Clock className="h-5 w-5" />}
           status={(live?.slowQueries ?? health.totalSlowQueries) > 0 ? 'warning' : 'neutral'}
         />
-        <div className="relative">
-          <ClickableMetricCard
-            to="/mysql/threads"
-            label="Active Threads"
-            value={live?.activeQueries ?? (health.processList || []).filter((p: { command: string }) => p.command !== 'Sleep' && p.command !== 'Daemon').length}
-            subValue={`${live?.threadsRunning ?? health.threadsRunning} running`}
-            icon={<Activity className="h-5 w-5" />}
-            status={(live?.activeQueries ?? (health.processList || []).filter((p: { command: string }) => p.command !== 'Sleep' && p.command !== 'Daemon').length) > 10 ? 'warning' : 'neutral'}
-          />
-          {threadsHistory.length > 3 && (
-            <div className="absolute bottom-1 left-5 right-14">
-              <Sparkline data={threadsHistory} color="#f59e0b" height={24} />
-            </div>
-          )}
-        </div>
+        <ClickableMetricCard
+          to="/mysql/threads"
+          label="Active Threads"
+          value={live?.activeQueries ?? (health.processList || []).filter((p: { command: string }) => p.command !== 'Sleep' && p.command !== 'Daemon').length}
+          subValue={`${live?.threadsRunning ?? health.threadsRunning} running`}
+          icon={<Activity className="h-5 w-5" />}
+          status={(live?.activeQueries ?? (health.processList || []).filter((p: { command: string }) => p.command !== 'Sleep' && p.command !== 'Daemon').length) > 10 ? 'warning' : 'neutral'}
+          footer={threadsHistory.length > 3 ? <Sparkline data={threadsHistory} color="#f59e0b" height={24} /> : undefined}
+        />
       </div>
 
       {/* Connection utilization bar + quick preview */}

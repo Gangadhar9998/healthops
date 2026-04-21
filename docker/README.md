@@ -27,7 +27,7 @@ This starts:
 
 ### 2b. (Optional) Start with demo services
 
-To try HealthOps with realistic monitoring targets (nginx, MySQL, Redis, echo server):
+To try HealthOps with realistic monitoring targets (nginx, MySQL, Redis, echo server, Linux servers):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d
@@ -38,6 +38,10 @@ This adds:
 - **MySQL** on port 3306 (for MySQL deep monitoring)
 - **Redis** on port 6379 (cache, TCP check)
 - **echo-server** on port 9000 (simple API endpoint)
+- **linux-server-1** on SSH port 2222 (nginx + python HTTP server + cron)
+- **linux-server-2** on SSH port 2223 (nginx + python HTTP server + cron)
+
+The Linux servers run real processes (nginx, python3 http.server, cron) that HealthOps monitors remotely via SSH process checks.
 
 All demo services come pre-configured with health checks in `backend/config/demo.json`.
 

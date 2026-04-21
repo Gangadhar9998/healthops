@@ -9,6 +9,26 @@
   "checkIntervalSeconds": 30,
   "workers": 8,
   "allowCommandChecks": false,
+  "servers": [
+    {
+      "id": "linux-server-1",
+      "name": "Linux Server 1",
+      "host": "linux-server-1",
+      "port": 22,
+      "user": "root",
+      "password": "testpass123",
+      "tags": ["linux", "docker", "demo"]
+    },
+    {
+      "id": "linux-server-2",
+      "name": "Linux Server 2",
+      "host": "linux-server-2",
+      "port": 22,
+      "user": "root",
+      "password": "testpass123",
+      "tags": ["linux", "docker", "demo"]
+    }
+  ],
   "checks": [
     {
       "id": "self-health",
@@ -222,6 +242,118 @@
       "intervalSeconds": 30,
       "enabled": true,
       "tags": ["logs", "self"]
+    },
+    {
+      "id": "ssh-linux-server-1",
+      "name": "Linux Server 1 SSH",
+      "type": "ssh",
+      "server": "linux-server-1",
+      "application": "linux",
+      "timeoutSeconds": 10,
+      "intervalSeconds": 30,
+      "enabled": true,
+      "tags": ["ssh", "linux", "demo"],
+      "ssh": {
+        "host": "linux-server-1",
+        "port": 22,
+        "user": "root",
+        "password": "testpass123"
+      }
+    },
+    {
+      "id": "ssh-linux-server-2",
+      "name": "Linux Server 2 SSH",
+      "type": "ssh",
+      "server": "linux-server-2",
+      "application": "linux",
+      "timeoutSeconds": 10,
+      "intervalSeconds": 30,
+      "enabled": true,
+      "tags": ["ssh", "linux", "demo"],
+      "ssh": {
+        "host": "linux-server-2",
+        "port": 22,
+        "user": "root",
+        "password": "testpass123"
+      }
+    },
+    {
+      "id": "nginx-process-server-1",
+      "name": "Nginx on Server 1",
+      "type": "process",
+      "server": "linux-server-1",
+      "application": "nginx",
+      "target": "nginx",
+      "serverId": "linux-server-1",
+      "timeoutSeconds": 5,
+      "intervalSeconds": 30,
+      "enabled": true,
+      "tags": ["process", "nginx", "demo"]
+    },
+    {
+      "id": "python-http-server-1",
+      "name": "Python HTTP on Server 1",
+      "type": "process",
+      "server": "linux-server-1",
+      "application": "python",
+      "target": "http.server",
+      "serverId": "linux-server-1",
+      "timeoutSeconds": 5,
+      "intervalSeconds": 30,
+      "enabled": true,
+      "tags": ["process", "python", "demo"]
+    },
+    {
+      "id": "cron-server-1",
+      "name": "Cron Daemon on Server 1",
+      "type": "process",
+      "server": "linux-server-1",
+      "application": "system",
+      "target": "cron",
+      "serverId": "linux-server-1",
+      "timeoutSeconds": 5,
+      "intervalSeconds": 30,
+      "enabled": true,
+      "tags": ["process", "cron", "demo"]
+    },
+    {
+      "id": "nginx-process-server-2",
+      "name": "Nginx on Server 2",
+      "type": "process",
+      "server": "linux-server-2",
+      "application": "nginx",
+      "target": "nginx",
+      "serverId": "linux-server-2",
+      "timeoutSeconds": 5,
+      "intervalSeconds": 30,
+      "enabled": true,
+      "tags": ["process", "nginx", "demo"]
+    },
+    {
+      "id": "python-http-server-2",
+      "name": "Python HTTP on Server 2",
+      "type": "process",
+      "server": "linux-server-2",
+      "application": "python",
+      "target": "http.server",
+      "serverId": "linux-server-2",
+      "timeoutSeconds": 5,
+      "intervalSeconds": 30,
+      "enabled": true,
+      "tags": ["process", "python", "demo"]
+    },
+    {
+      "id": "cron-server-2",
+      "name": "Cron Daemon on Server 2",
+      "type": "process",
+      "server": "linux-server-2",
+      "application": "system",
+      "target": "cron",
+      "serverId": "linux-server-2",
+      "timeoutSeconds": 5,
+      "intervalSeconds": 30,
+      "enabled": true,
+      "tags": ["process", "cron", "demo"]
     }
   ]
 }

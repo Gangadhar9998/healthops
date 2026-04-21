@@ -11,15 +11,16 @@ interface Props {
   subValue?: string
   status?: 'healthy' | 'warning' | 'critical' | 'neutral'
   className?: string
+  footer?: ReactNode
 }
 
 /** Clickable metric card that navigates to a detail page. Reusable across any DB type. */
-export function ClickableMetricCard({ to, icon, label, value, subValue, status = 'neutral', className }: Props) {
+export function ClickableMetricCard({ to, icon, label, value, subValue, status = 'neutral', className, footer }: Props) {
   return (
     <Link
       to={to}
       className={cn(
-        'group relative rounded-xl border border-slate-200 bg-white p-5 transition-all hover:shadow-md hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700',
+        'group relative block rounded-xl border border-slate-200 bg-white p-5 transition-all hover:shadow-md hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700',
         status === 'healthy' && 'ring-1 ring-emerald-200 dark:ring-emerald-900',
         status === 'warning' && 'ring-1 ring-amber-200 dark:ring-amber-900',
         status === 'critical' && 'ring-1 ring-red-200 dark:ring-red-900',
@@ -36,6 +37,7 @@ export function ClickableMetricCard({ to, icon, label, value, subValue, status =
           {icon}
         </div>
       </div>
+      {footer && <div className="mt-2">{footer}</div>}
       <ChevronRight className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-300 opacity-0 transition-opacity group-hover:opacity-100 dark:text-slate-600" />
     </Link>
   )
