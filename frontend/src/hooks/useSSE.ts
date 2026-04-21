@@ -18,12 +18,16 @@ export function useSSE(onMessage: (payload: SSEPayload) => void) {
 
     es.onopen = () => setConnected(true)
 
-    es.onmessage = (event) => {
+    // Listen for both named 'snapshot' events and unnamed message events
+    const handler = (event: MessageEvent) => {
       try {
         const payload = JSON.parse(event.data) as SSEPayload
         onMessageRef.current(payload)
       } catch { /* ignore malformed events */ }
     }
+
+    es.addEventListener('snapshot', handler as EventListener)
+    es.onmessage = handler
 
     es.onerror = () => {
       setConnected(false)
