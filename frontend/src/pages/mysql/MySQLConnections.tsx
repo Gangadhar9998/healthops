@@ -5,11 +5,15 @@ import { mysqlApi } from '@/api/mysql'
 import { DetailPageLayout } from '@/components/db/DetailPageLayout'
 import { UtilizationBar } from '@/components/db/UtilizationBar'
 import { BreakdownCard } from '@/components/db/BreakdownCard'
+import { LiveProcessList } from '@/components/db/LiveProcessList'
+import { LiveIndicator } from '@/components/db/LiveIndicator'
+import { Sparkline } from '@/components/charts/Sparkline'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { cn } from '@/lib/utils'
 import { REFETCH_INTERVAL } from '@/lib/constants'
-import type { MySQLProcess, MySQLUserStat, MySQLHostStat } from '@/types'
+import { useMySQLLive } from '@/hooks/useMySQLLive'
+import type { MySQLUserStat, MySQLHostStat } from '@/types'
 
 export default function MySQLConnections() {
   const { data: health, isLoading, error, refetch } = useQuery({
@@ -17,6 +21,8 @@ export default function MySQLConnections() {
     queryFn: mysqlApi.health,
     refetchInterval: REFETCH_INTERVAL,
   })
+
+  const { snapshot: live, history, connected: liveConnected } = useMySQLLive(!isLoading && !error)
 
   const [searchParams] = useSearchParams()
   const highlightRefused = searchParams.get('highlight') === 'refused'
@@ -32,17 +38,29 @@ export default function MySQLConnections() {
   if (error) return <ErrorState message="Failed to load MySQL connections" retry={() => refetch()} />
   if (!health) return null
 
-  const processList: MySQLProcess[] = health.processList || []
+  const processList = live?.processList ?? health.processList ?? []
+  const longRunning = live?.longRunning ?? processList.filter(p => p.time > 5 && p.command !== 'Daemon')
   const userStats: MySQLUserStat[] = health.userStats || []
   const hostStats: MySQLHostStat[] = health.hostStats || []
   const activeProcesses = processList.filter(p => p.command !== 'Sleep' && p.command !== 'Daemon')
-  const longRunning = processList.filter(p => p.time > 5 && p.command !== 'Daemon')
+  const connHistory = history.map(s => s.connections)
 
   return (
-    <DetailPageLayout backTo="/mysql" backLabel="Back to MySQL" title="Connections" subtitle={`${health.connections} of ${health.maxConnections} connections used`}>
+    <DetailPageLayout backTo="/mysql" backLabel="Back to MySQL" title="Connections" subtitle={`${live?.connections ?? health.connections} of ${health.maxConnections} connections used`}>
       {/* Utilization + summary */}
       <div className="grid gap-4 lg:grid-cols-3">
-        <UtilizationBar label="Connection Utilization" value={health.connections} max={health.maxConnections} />
+        <div className="space-y-2">
+          <UtilizationBar label="Connection Utilization" value={live?.connections ?? health.connections} max={health.maxConnections} />
+          {connHistory.length > 3 && (
+            <div className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-medium text-slate-500">Connection History</span>
+                <LiveIndicator connected={liveConnected} />
+              </div>
+              <Sparkline data={connHistory} color="#6366f1" height={40} />
+            </div>
+          )}
+        </div>
         <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
           <h2 className="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">Connection Summary</h2>
           <div className="grid grid-cols-2 gap-3 text-sm">
@@ -80,11 +98,12 @@ export default function MySQLConnections() {
         />
       </div>
 
-      {/* Full process list */}
+      {/* Full process list with kill buttons */}
       <div className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         <div className="border-b border-slate-100 px-5 py-3.5 dark:border-slate-800 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">All Connections ({processList.length})</h2>
           <div className="flex items-center gap-2">
+            <LiveIndicator connected={liveConnected} />
             {longRunning.length > 0 && (
               <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
                 {longRunning.length} long-running ({'>'}5s)
@@ -97,58 +116,9 @@ export default function MySQLConnections() {
             )}
           </div>
         </div>
-        {processList.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-100 bg-slate-50/50 dark:border-slate-800 dark:bg-slate-800/30">
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-slate-500">ID</th>
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-slate-500">User</th>
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-slate-500">Host</th>
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-slate-500">DB</th>
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-slate-500">Command</th>
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-slate-500">Time</th>
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-slate-500">State</th>
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-slate-500">Query</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {processList.map((p) => (
-                  <tr key={p.id} className={cn(
-                    p.command !== 'Sleep' && p.command !== 'Daemon' && 'bg-blue-50/50 dark:bg-blue-900/10',
-                    p.time > 10 && 'bg-red-50/50 dark:bg-red-900/10',
-                    p.time > 5 && p.time <= 10 && 'bg-amber-50/50 dark:bg-amber-900/10',
-                  )}>
-                    <td className="px-4 py-2.5 font-mono text-xs text-slate-600 dark:text-slate-400">{p.id}</td>
-                    <td className="px-4 py-2.5 text-xs font-medium text-slate-900 dark:text-slate-100">{p.user}</td>
-                    <td className="px-4 py-2.5 text-xs text-slate-500">{p.host}</td>
-                    <td className="px-4 py-2.5 text-xs text-slate-500">{p.db || '—'}</td>
-                    <td className="px-4 py-2.5">
-                      <span className={cn(
-                        'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
-                        p.command === 'Query' && 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
-                        p.command === 'Sleep' && 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400',
-                        p.command === 'Connect' && 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
-                        p.command !== 'Query' && p.command !== 'Sleep' && p.command !== 'Connect' && 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400',
-                      )}>
-                        {p.command}
-                      </span>
-                    </td>
-                    <td className={cn('px-4 py-2.5 font-mono text-xs', p.time > 10 ? 'text-red-600 font-semibold' : p.time > 5 ? 'text-amber-600 font-semibold' : 'text-slate-500')}>{p.time}s</td>
-                    <td className="px-4 py-2.5 text-xs text-slate-500">{p.state || '—'}</td>
-                    <td className="px-4 py-2.5 max-w-xs">
-                      {p.info ? (
-                        <code className="block truncate rounded bg-slate-50 px-2 py-1 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-300" title={p.info}>{p.info}</code>
-                      ) : <span className="text-xs text-slate-400">—</span>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="p-8 text-center text-sm text-slate-400">No active connections</div>
-        )}
+        <div className="p-4">
+          <LiveProcessList processes={processList} longRunning={longRunning} />
+        </div>
       </div>
     </DetailPageLayout>
   )
