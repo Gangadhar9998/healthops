@@ -18,6 +18,12 @@ import {
 
 type Period = '24h' | '7d' | '30d'
 
+const PERIOD_LABELS: Record<Period, string> = {
+  '24h': 'Today',
+  '7d': '7 Days',
+  '30d': '30 Days',
+}
+
 export default function Analytics() {
   const [period, setPeriod] = useState<Period>('24h')
 
@@ -84,7 +90,7 @@ export default function Analytics() {
                     : 'text-slate-600 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800',
                 )}
               >
-                {p}
+                {PERIOD_LABELS[p]}
               </button>
             ))}
           </div>
@@ -94,7 +100,7 @@ export default function Analytics() {
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <MetricCard label="Avg Uptime" value={`${avgUptime.toFixed(2)}%`} icon={<TrendingUp className="h-5 w-5" />} />
+        <MetricCard label={`Avg Uptime (${PERIOD_LABELS[period]})`} value={`${avgUptime.toFixed(2)}%`} icon={<TrendingUp className="h-5 w-5" />} />
         {incidentStats && <>
           <MetricCard label="Total Incidents" value={incidentStats.total} icon={<AlertTriangle className="h-5 w-5" />} />
           <MetricCard
@@ -113,7 +119,7 @@ export default function Analytics() {
       {/* Uptime by check */}
       {uptime && uptime.length > 0 && (
         <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-          <h2 className="mb-4 text-sm font-semibold text-slate-900 dark:text-slate-100">Uptime by Check ({period})</h2>
+          <h2 className="mb-4 text-sm font-semibold text-slate-900 dark:text-slate-100">Uptime by Check ({PERIOD_LABELS[period]})</h2>
           <UptimeChart data={uptime} />
         </div>
       )}
@@ -121,7 +127,7 @@ export default function Analytics() {
       {/* Response times */}
       {responseTimes && responseTimes.length > 0 && (
         <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-          <h2 className="mb-4 text-sm font-semibold text-slate-900 dark:text-slate-100">Response Times ({period})</h2>
+          <h2 className="mb-4 text-sm font-semibold text-slate-900 dark:text-slate-100">Response Times ({PERIOD_LABELS[period]})</h2>
           <ResponseTimeChart data={responseTimes} showPercentiles />
         </div>
       )}
@@ -129,7 +135,7 @@ export default function Analytics() {
       {/* Failure rate */}
       {failureRate && failureRate.length > 0 && (
         <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-          <h2 className="mb-4 text-sm font-semibold text-slate-900 dark:text-slate-100">Failure Rate ({period})</h2>
+          <h2 className="mb-4 text-sm font-semibold text-slate-900 dark:text-slate-100">Failure Rate ({PERIOD_LABELS[period]})</h2>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={failureRate}>
@@ -152,7 +158,7 @@ export default function Analytics() {
 
       {/* Status timeline — grouped by check, bucketed by time */}
       {statusTimeline && statusTimeline.length > 0 && (
-        <StatusTimelineGrid entries={statusTimeline} period={period} activeCheckIds={activeCheckIds} />
+        <StatusTimelineGrid entries={statusTimeline} period={period} activeCheckIds={activeCheckIds} periodLabel={PERIOD_LABELS[period]} />
       )}
     </div>
   )
@@ -162,7 +168,7 @@ export default function Analytics() {
 
 import type { StatusTimelineEntry } from '@/types'
 
-function StatusTimelineGrid({ entries, period, activeCheckIds }: { entries: StatusTimelineEntry[]; period: Period; activeCheckIds: Set<string> | null }) {
+function StatusTimelineGrid({ entries, period, activeCheckIds, periodLabel }: { entries: StatusTimelineEntry[]; period: Period; activeCheckIds: Set<string> | null; periodLabel: string }) {
   const grid = useMemo(() => {
     // Determine bucket size based on period
     const bucketMs = period === '24h' ? 60 * 60 * 1000 : // 1 hour buckets
@@ -174,13 +180,24 @@ function StatusTimelineGrid({ entries, period, activeCheckIds }: { entries: Stat
     const periodMs = period === '24h' ? 24 * 60 * 60 * 1000 :
                      period === '7d'  ? 7 * 24 * 60 * 60 * 1000 :
                                         30 * 24 * 60 * 60 * 1000
-    const start = now - periodMs
-    const bucketCount = Math.ceil(periodMs / bucketMs)
+    const periodStart = now - periodMs
 
     // Filter to only active checks
     const filtered = activeCheckIds
       ? entries.filter(e => activeCheckIds.has(e.checkId || ''))
       : entries
+
+    // Find the earliest data point across all entries
+    let earliestData = now
+    for (const e of filtered) {
+      const ts = new Date(e.timestamp).getTime()
+      if (ts >= periodStart && ts < earliestData) earliestData = ts
+    }
+
+    // Use earliest data point as start (aligned to bucket boundary), with 1 bucket buffer
+    const alignedEarliest = Math.floor(earliestData / bucketMs) * bucketMs
+    const start = Math.max(periodStart, alignedEarliest - bucketMs)
+    const bucketCount = Math.max(1, Math.ceil((now - start) / bucketMs))
 
     // Group entries by check
     const byCheck = new Map<string, { name: string; entries: StatusTimelineEntry[] }>()
@@ -212,7 +229,7 @@ function StatusTimelineGrid({ entries, period, activeCheckIds }: { entries: Stat
 
     // Build time labels
     const labels: string[] = []
-    const labelInterval = period === '24h' ? 4 : period === '7d' ? 4 : 5
+    const labelInterval = bucketCount <= 8 ? 1 : bucketCount <= 16 ? 2 : bucketCount <= 24 ? 4 : 5
     for (let i = 0; i < bucketCount; i++) {
       if (i % labelInterval === 0) {
         const t = new Date(start + i * bucketMs)
@@ -226,7 +243,7 @@ function StatusTimelineGrid({ entries, period, activeCheckIds }: { entries: Stat
       }
     }
 
-    return { rows, labels, bucketCount }
+    return { rows, labels, bucketCount, start, bucketMs }
   }, [entries, period, activeCheckIds])
 
   if (grid.rows.length === 0) return null
@@ -234,7 +251,7 @@ function StatusTimelineGrid({ entries, period, activeCheckIds }: { entries: Stat
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
       <h2 className="mb-4 text-sm font-semibold text-slate-900 dark:text-slate-100">
-        Status Timeline ({period === '24h' ? 'Today' : period})
+        Status Timeline ({periodLabel})
       </h2>
       <div className="overflow-x-auto">
         <div className="min-w-[600px]">
@@ -255,20 +272,25 @@ function StatusTimelineGrid({ entries, period, activeCheckIds }: { entries: Stat
                   {row.name}
                 </span>
                 <div className="flex flex-1 gap-px">
-                  {row.buckets.map((status, i) => (
-                    <div
-                      key={i}
-                      className={cn(
-                        'h-5 flex-1 rounded-[2px] transition-colors',
-                        status === 'healthy' && 'bg-emerald-500',
-                        status === 'warning' && 'bg-amber-400',
-                        status === 'critical' && 'bg-red-500',
-                        status === 'unknown' && 'bg-slate-300 dark:bg-slate-600',
-                        status === null && 'bg-slate-100 dark:bg-slate-800',
-                      )}
-                      title={status ? `${row.name}: ${status}` : `${row.name}: no data`}
-                    />
-                  ))}
+                  {row.buckets.map((status, i) => {
+                    const bucketTime = new Date(grid.start + i * grid.bucketMs)
+                    const bucketEnd = new Date(grid.start + (i + 1) * grid.bucketMs)
+                    const timeLabel = `${format(bucketTime, 'MMM d HH:mm')} – ${format(bucketEnd, 'HH:mm')}`
+                    return (
+                      <div
+                        key={i}
+                        className={cn(
+                          'h-5 flex-1 rounded-[2px] transition-colors',
+                          status === 'healthy' && 'bg-emerald-500',
+                          status === 'warning' && 'bg-amber-400',
+                          status === 'critical' && 'bg-red-500',
+                          status === 'unknown' && 'bg-slate-300 dark:bg-slate-600',
+                          status === null && 'bg-slate-100 dark:bg-slate-800',
+                        )}
+                        title={`${row.name}: ${status ?? 'no data'}\n${timeLabel}`}
+                      />
+                    )
+                  })}
                 </div>
               </div>
             ))}

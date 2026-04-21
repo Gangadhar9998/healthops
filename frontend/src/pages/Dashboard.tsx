@@ -5,7 +5,7 @@ import {
   Activity, AlertTriangle, Clock, Server, Monitor, Wifi,
   ArrowRight, Play, TrendingUp, Shield, CheckCircle2,
   XCircle, HelpCircle, Calendar, ChevronDown, ChevronRight,
-  Cpu, HardDrive, MemoryStick, Gauge, RefreshCw,
+  Cpu, HardDrive, MemoryStick, Gauge, RefreshCw, Plus, X,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { dashboardApi } from '@/api/dashboard'
@@ -24,7 +24,8 @@ import { useToast } from '@/components/Toast'
 import { REFETCH_INTERVAL } from '@/lib/constants'
 import { useLiveSummary } from '@/hooks/useLiveSummary'
 import { LiveIndicator } from '@/components/db/LiveIndicator'
-import type { CheckConfig, CheckResult, RemoteServer, StatusCount, ServerSnapshot, Incident } from '@/types'
+import { AddCheckModal } from '@/components/AddCheckModal'
+import type { CheckConfig, CheckResult, RemoteServer, StatusCount, ServerSnapshot, Incident, RunSummary } from '@/types'
 
 const PERIOD_OPTIONS = [
   { label: 'Today', value: '24h' },
@@ -38,6 +39,8 @@ export default function Dashboard() {
   const [period, setPeriod] = useState<Period>('24h')
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set())
   const [runningChecks, setRunningChecks] = useState(false)
+  const [lastRunResult, setLastRunResult] = useState<{ summary: RunSummary['summary']; at: Date } | null>(null)
+  const [showAddModal, setShowAddModal] = useState(false)
   const queryClient = useQueryClient()
   const toast = useToast()
 
@@ -257,11 +260,20 @@ export default function Dashboard() {
             ))}
           </div>
           <button
+            onClick={() => setShowAddModal(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add Check
+          </button>
+          <button
             onClick={async () => {
               if (runningChecks) return
               setRunningChecks(true)
+              setLastRunResult(null)
               try {
                 const result = await dashboardApi.runNow()
+                setLastRunResult({ summary: result.summary, at: new Date() })
                 toast.success(`Checks completed: ${result.summary.healthy} healthy, ${result.summary.warning} warning, ${result.summary.critical} critical`)
                 queryClient.invalidateQueries({ queryKey: ['dashboard'] })
                 queryClient.invalidateQueries({ queryKey: ['checks'] })
@@ -289,6 +301,28 @@ export default function Dashboard() {
           </button>
         </div>
       </div>
+
+      {/* Run Now result banner */}
+      {lastRunResult && (
+        <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 dark:border-emerald-900 dark:bg-emerald-950/30">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+          <div className="flex-1 text-sm">
+            <span className="font-medium text-emerald-800 dark:text-emerald-300">Checks completed</span>
+            <span className="ml-2 text-emerald-700 dark:text-emerald-400">
+              {lastRunResult.summary.healthy} healthy, {lastRunResult.summary.warning} warning, {lastRunResult.summary.critical} critical
+            </span>
+            <span className="ml-2 text-xs text-emerald-600/70 dark:text-emerald-500/70">
+              {format(lastRunResult.at, 'HH:mm:ss')}
+            </span>
+          </div>
+          <button
+            onClick={() => setLastRunResult(null)}
+            className="shrink-0 rounded-md p-1 text-emerald-600 hover:bg-emerald-100 dark:text-emerald-400 dark:hover:bg-emerald-900/50"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Top metrics */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
@@ -663,6 +697,18 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {showAddModal && (
+        <AddCheckModal
+          onClose={() => setShowAddModal(false)}
+          onCreated={() => {
+            setShowAddModal(false)
+            queryClient.invalidateQueries({ queryKey: ['checks'] })
+            queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+            toast.success('Check created')
+          }}
+        />
+      )}
     </div>
   )
 }
