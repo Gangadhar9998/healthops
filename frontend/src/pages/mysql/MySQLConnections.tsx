@@ -13,7 +13,6 @@ import { ErrorState } from '@/components/ErrorState'
 import { cn } from '@/lib/utils'
 import { REFETCH_INTERVAL } from '@/lib/constants'
 import { useMySQLLive } from '@/hooks/useMySQLLive'
-import type { MySQLUserStat, MySQLHostStat } from '@/types'
 
 export default function MySQLConnections() {
   const { data: health, isLoading, error, refetch } = useQuery({
@@ -40,17 +39,23 @@ export default function MySQLConnections() {
 
   const processList = live?.processList ?? health.processList ?? []
   const longRunning = live?.longRunning ?? processList.filter(p => p.time > 5 && p.command !== 'Daemon')
-  const userStats: MySQLUserStat[] = health.userStats || []
-  const hostStats: MySQLHostStat[] = health.hostStats || []
+  const userStats = live?.userStats ?? health.userStats ?? []
+  const hostStats = live?.hostStats ?? health.hostStats ?? []
   const activeProcesses = processList.filter(p => p.command !== 'Sleep' && p.command !== 'Daemon')
   const connHistory = history.map(s => s.connections)
 
+  const currentConnections = live?.connections ?? health.connections
+  const abortedConnects = live?.abortedConnects ?? health.abortedConnects
+  const abortedClients = live?.abortedClients ?? health.abortedClients
+  const connectionsRefused = live?.connectionsRefused ?? health.connectionsRefused ?? 0
+  const maxUsedConnections = live?.maxUsedConnections ?? health.maxUsedConnections
+
   return (
-    <DetailPageLayout backTo="/mysql" backLabel="Back to MySQL" title="Connections" subtitle={`${live?.connections ?? health.connections} of ${health.maxConnections} connections used`}>
+    <DetailPageLayout backTo="/mysql" backLabel="Back to MySQL" title="Connections" subtitle={`${currentConnections} of ${health.maxConnections} connections used`}>
       {/* Utilization + summary */}
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-2">
-          <UtilizationBar label="Connection Utilization" value={live?.connections ?? health.connections} max={health.maxConnections} />
+          <UtilizationBar label="Connection Utilization" value={currentConnections} max={health.maxConnections} />
           {connHistory.length > 3 && (
             <div className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
               <div className="flex items-center justify-between mb-1">
@@ -64,18 +69,18 @@ export default function MySQLConnections() {
         <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
           <h2 className="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">Connection Summary</h2>
           <div className="grid grid-cols-2 gap-3 text-sm">
-            <div><span className="text-slate-500">Current</span><p className="font-semibold text-slate-900 dark:text-slate-100">{health.connections}</p></div>
-            <div><span className="text-slate-500">Peak</span><p className="font-semibold text-slate-900 dark:text-slate-100">{health.maxUsedConnections}</p></div>
-            <div><span className="text-slate-500">Aborted Connects</span><p className={cn('font-semibold', health.abortedConnects > 0 ? 'text-red-600' : 'text-slate-900 dark:text-slate-100')}>{health.abortedConnects}</p></div>
-            <div><span className="text-slate-500">Aborted Clients</span><p className={cn('font-semibold', health.abortedClients > 0 ? 'text-amber-600' : 'text-slate-900 dark:text-slate-100')}>{health.abortedClients}</p></div>
-            <div id="stat-connections-refused" className={cn('col-span-2 rounded-lg p-2 -m-2 transition-all', highlightRefused && 'ring-2 ring-blue-400/50 bg-blue-50/50 dark:bg-blue-900/20')}><span className="text-slate-500">Connections Refused</span><p className={cn('font-semibold', (health.connectionsRefused ?? 0) > 0 ? 'text-red-600' : 'text-slate-900 dark:text-slate-100')}>{health.connectionsRefused ?? 0}</p></div>
+            <div><span className="text-slate-500">Current</span><p className="font-semibold text-slate-900 dark:text-slate-100">{currentConnections}</p></div>
+            <div><span className="text-slate-500">Peak</span><p className="font-semibold text-slate-900 dark:text-slate-100">{maxUsedConnections}</p></div>
+            <div><span className="text-slate-500">Aborted Connects</span><p className={cn('font-semibold', abortedConnects > 0 ? 'text-red-600' : 'text-slate-900 dark:text-slate-100')}>{abortedConnects}</p></div>
+            <div><span className="text-slate-500">Aborted Clients</span><p className={cn('font-semibold', abortedClients > 0 ? 'text-amber-600' : 'text-slate-900 dark:text-slate-100')}>{abortedClients}</p></div>
+            <div id="stat-connections-refused" className={cn('col-span-2 rounded-lg p-2 -m-2 transition-all', highlightRefused && 'ring-2 ring-blue-400/50 bg-blue-50/50 dark:bg-blue-900/20')}><span className="text-slate-500">Connections Refused</span><p className={cn('font-semibold', connectionsRefused > 0 ? 'text-red-600' : 'text-slate-900 dark:text-slate-100')}>{connectionsRefused}</p></div>
           </div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
           <h2 className="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">Thread Stats</h2>
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div><span className="text-slate-500">Total Processes</span><p className="font-semibold text-slate-900 dark:text-slate-100">{processList.length}</p></div>
-            <div><span className="text-slate-500">Max Used</span><p className="font-semibold text-slate-900 dark:text-slate-100">{health.maxUsedConnections}</p></div>
+            <div><span className="text-slate-500">Max Used</span><p className="font-semibold text-slate-900 dark:text-slate-100">{maxUsedConnections}</p></div>
             <div><span className="text-slate-500">Active Queries</span><p className="font-semibold text-blue-600">{activeProcesses.length}</p></div>
             <div><span className="text-slate-500">Long Running</span><p className={cn('font-semibold', longRunning.length > 0 ? 'text-amber-600' : 'text-slate-900 dark:text-slate-100')}>{longRunning.length}</p></div>
           </div>
@@ -86,12 +91,12 @@ export default function MySQLConnections() {
       <div className="grid gap-4 lg:grid-cols-2">
         <BreakdownCard
           title="Connections by User"
-          items={userStats.map(u => ({ label: u.user, value: u.currentConnections, total: u.totalConnections, maxValue: health.connections }))}
+          items={userStats.map(u => ({ label: u.user, value: u.currentConnections, total: u.totalConnections, maxValue: currentConnections }))}
           emptyMessage="No user stats available"
         />
         <BreakdownCard
           title="Connections by Host"
-          items={hostStats.map(h => ({ label: h.host, value: h.currentConnections, total: h.totalConnections, maxValue: health.connections }))}
+          items={hostStats.map(h => ({ label: h.host, value: h.currentConnections, total: h.totalConnections, maxValue: currentConnections }))}
           barColor={(v) => v > 20 ? 'bg-red-500' : v > 5 ? 'bg-amber-500' : 'bg-indigo-500'}
           emptyMessage="No host stats available"
           mono

@@ -3,10 +3,13 @@ import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { mysqlApi } from '@/api/mysql'
 import { DetailPageLayout } from '@/components/db/DetailPageLayout'
+import { LiveIndicator } from '@/components/db/LiveIndicator'
+import { Sparkline } from '@/components/charts/Sparkline'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { cn } from '@/lib/utils'
 import { REFETCH_INTERVAL } from '@/lib/constants'
+import { useMySQLLive } from '@/hooks/useMySQLLive'
 import type { MySQLDigestStat } from '@/types'
 import { AlertTriangle, Search, XCircle, Filter } from 'lucide-react'
 
@@ -16,6 +19,8 @@ export default function MySQLQueries() {
     queryFn: mysqlApi.health,
     refetchInterval: REFETCH_INTERVAL,
   })
+
+  const { snapshot: live, history, connected: liveConnected } = useMySQLLive(!isLoading && !error)
 
   const [searchParams] = useSearchParams()
   const highlight = searchParams.get('highlight')
@@ -37,6 +42,9 @@ export default function MySQLQueries() {
   if (error) return <ErrorState message="Failed to load MySQL queries" retry={() => refetch()} />
   if (!health) return null
 
+  const qps = live?.queriesPerSec ?? health.queriesPerSec
+  const slowTotal = live?.slowQueries ?? health.totalSlowQueries
+  const qpsHistory = history.map(s => s.queriesPerSec)
   const topQueries: MySQLDigestStat[] = health.topQueries || []
 
   // Identify dangerous queries: examines >> sent (needs index)
@@ -67,11 +75,24 @@ export default function MySQLQueries() {
   }
 
   return (
-    <DetailPageLayout backTo="/mysql" backLabel="Back to MySQL" title="Slow Queries & Digests" subtitle={`${health.totalSlowQueries} total slow queries · ${health.queriesPerSec.toFixed(1)} queries/sec`}>
+    <DetailPageLayout backTo="/mysql" backLabel="Back to MySQL" title="Slow Queries & Digests" subtitle={`${slowTotal} total slow queries · ${qps.toFixed(1)} queries/sec`}>
       {/* Summary cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
-        <SummaryCard label="Queries/sec" value={health.queriesPerSec.toFixed(1)} />
-        <SummaryCard label="Total Slow Queries" value={String(health.totalSlowQueries)} warn={health.totalSlowQueries > 0} />
+        <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs font-medium text-slate-500">Queries/sec</span>
+            <LiveIndicator connected={liveConnected} />
+          </div>
+          {qpsHistory.length > 3 ? (
+            <>
+              <p className="text-lg font-bold text-slate-900 dark:text-slate-100 mb-1">{qps.toFixed(1)}</p>
+              <Sparkline data={qpsHistory} color="#3b82f6" height={28} />
+            </>
+          ) : (
+            <p className="text-2xl font-bold text-slate-900 dark:text-slate-100">{qps.toFixed(1)}</p>
+          )}
+        </div>
+        <SummaryCard label="Total Slow Queries" value={String(slowTotal)} warn={slowTotal > 0} />
         <SummaryCard label="Slow/sec" value={health.slowQueries > 0 ? health.slowQueries.toFixed(3) : '0'} warn={health.slowQueries > 0} />
         <SummaryCard id="stat-full-scans" highlighted={highlight === 'full-scans'} label="Full Table Scans" value={formatNumber(health.selectScan ?? 0)} warn={(health.selectScan ?? 0) > 1000} />
         <SummaryCard id="stat-full-joins" highlighted={highlight === 'full-joins'} label="Full Joins (no idx)" value={formatNumber(health.selectFullJoin ?? 0)} warn={(health.selectFullJoin ?? 0) > 0} />

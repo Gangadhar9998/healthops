@@ -29,6 +29,17 @@ type MySQLLiveSnapshot struct {
 	LongRunning       []monitoring.MySQLProcess `json:"longRunning"`
 	ActiveQueries     int                       `json:"activeQueries"`
 	LongRunningCount  int                       `json:"longRunningCount"`
+	// Extended fields for full real-time coverage
+	Status             string                     `json:"status"` // "healthy", "warning", "critical"
+	AbortedConnects    int64                      `json:"abortedConnects"`
+	AbortedClients     int64                      `json:"abortedClients"`
+	ConnectionsRefused int64                      `json:"connectionsRefused"`
+	MaxUsedConnections int64                      `json:"maxUsedConnections"`
+	InnoDBRowLockWaits int64                      `json:"innodbRowLockWaits"`
+	TableLocksWaited   int64                      `json:"tableLocksWaited"`
+	BufferPoolHitRate  float64                    `json:"bufferPoolHitRate"`
+	UserStats          []monitoring.MySQLUserStat `json:"userStats,omitempty"`
+	HostStats          []monitoring.MySQLHostStat `json:"hostStats,omitempty"`
 }
 
 // KillQueryRequest is the body for POST /api/v1/mysql/kill.
@@ -161,6 +172,7 @@ func (h *MySQLAPIHandler) collectLiveSnapshot(ctx context.Context, check *monito
 		return nil, fmt.Errorf("global status: %w", err)
 	}
 	defer rows.Close()
+	var bufferPoolReads, bufferPoolReadRequests int64
 	for rows.Next() {
 		var name string
 		var value sql.NullString
@@ -180,10 +192,25 @@ func (h *MySQLAPIHandler) collectLiveSnapshot(ctx context.Context, check *monito
 		case "Slow_queries":
 			snap.SlowQueries = v
 		case "Questions":
-			// Will compute QPS with uptime
 			snap.QueriesPerSec = float64(v)
 		case "Uptime":
 			snap.UptimeSeconds = v
+		case "Aborted_connects":
+			snap.AbortedConnects = v
+		case "Aborted_clients":
+			snap.AbortedClients = v
+		case "Connection_errors_max_connections":
+			snap.ConnectionsRefused = v
+		case "Max_used_connections":
+			snap.MaxUsedConnections = v
+		case "Innodb_row_lock_waits":
+			snap.InnoDBRowLockWaits = v
+		case "Table_locks_waited":
+			snap.TableLocksWaited = v
+		case "Innodb_buffer_pool_reads":
+			bufferPoolReads = v
+		case "Innodb_buffer_pool_read_requests":
+			bufferPoolReadRequests = v
 		}
 	}
 	rows.Close()
@@ -191,6 +218,11 @@ func (h *MySQLAPIHandler) collectLiveSnapshot(ctx context.Context, check *monito
 	// Compute QPS
 	if snap.UptimeSeconds > 0 {
 		snap.QueriesPerSec = snap.QueriesPerSec / float64(snap.UptimeSeconds)
+	}
+
+	// Buffer pool hit rate
+	if bufferPoolReadRequests > 0 {
+		snap.BufferPoolHitRate = (1 - float64(bufferPoolReads)/float64(bufferPoolReadRequests)) * 100
 	}
 
 	// Get max_connections
@@ -247,6 +279,44 @@ func (h *MySQLAPIHandler) collectLiveSnapshot(ctx context.Context, check *monito
 	}
 
 	snap.LongRunningCount = len(snap.LongRunning)
+
+	// Collect user stats from performance_schema
+	userRows, err := db.QueryContext(queryCtx, "SELECT USER, CURRENT_CONNECTIONS, TOTAL_CONNECTIONS FROM performance_schema.users WHERE USER IS NOT NULL ORDER BY CURRENT_CONNECTIONS DESC LIMIT 10")
+	if err == nil {
+		defer userRows.Close()
+		for userRows.Next() {
+			var u monitoring.MySQLUserStat
+			if err := userRows.Scan(&u.User, &u.CurrentConnections, &u.TotalConnections); err != nil {
+				continue
+			}
+			snap.UserStats = append(snap.UserStats, u)
+		}
+		userRows.Close()
+	}
+
+	// Collect host stats from performance_schema
+	hostRows, err := db.QueryContext(queryCtx, "SELECT HOST, CURRENT_CONNECTIONS, TOTAL_CONNECTIONS FROM performance_schema.hosts WHERE HOST IS NOT NULL ORDER BY CURRENT_CONNECTIONS DESC LIMIT 10")
+	if err == nil {
+		defer hostRows.Close()
+		for hostRows.Next() {
+			var h monitoring.MySQLHostStat
+			if err := hostRows.Scan(&h.Host, &h.CurrentConnections, &h.TotalConnections); err != nil {
+				continue
+			}
+			snap.HostStats = append(snap.HostStats, h)
+		}
+		hostRows.Close()
+	}
+
+	// Derive status
+	snap.Status = "healthy"
+	if snap.ConnectionUtilPct > 80 || snap.LongRunningCount > 0 || snap.InnoDBRowLockWaits > 100 {
+		snap.Status = "warning"
+	}
+	if snap.ConnectionUtilPct > 95 || snap.LongRunningCount > 5 {
+		snap.Status = "critical"
+	}
+
 	return snap, nil
 }
 
