@@ -14,16 +14,18 @@ import (
 // AIAPIHandler handles all AI-related API endpoints.
 type AIAPIHandler struct {
 	aiService   *AIService
-	configStore *AIConfigStore
+	configStore AIConfigStoreInterface
 	auditLogger *monitoring.AuditLogger
 	cfg         *monitoring.Config
 	mysqlRepo   monitoring.MySQLMetricsRepository
+	// mongoAIRepo is the MongoDB AI config repository for key rotation support
+	mongoAIRepo interface{}
 }
 
 // NewAIAPIHandler creates a new AI API handler.
 func NewAIAPIHandler(
 	aiService *AIService,
-	configStore *AIConfigStore,
+	configStore AIConfigStoreInterface,
 	auditLogger *monitoring.AuditLogger,
 	cfg *monitoring.Config,
 ) *AIAPIHandler {
@@ -33,6 +35,11 @@ func NewAIAPIHandler(
 		auditLogger: auditLogger,
 		cfg:         cfg,
 	}
+}
+
+// SetMongoAIRepo sets the MongoDB AI config repository for advanced operations like key rotation.
+func (h *AIAPIHandler) SetMongoAIRepo(repo interface{}) {
+	h.mongoAIRepo = repo
 }
 
 // SetMySQLRepo sets the MySQL repository for AI MySQL analysis.
@@ -52,6 +59,8 @@ func (h *AIAPIHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/ai/results", h.handleAIResultsList)
 	mux.HandleFunc("/api/v1/ai/results/", h.handleAIResults)
 	mux.HandleFunc("/api/v1/mysql/ai/ask", h.handleMySQLAIAsk)
+	mux.HandleFunc("/api/v1/ai/keys/rotate", h.handleKeyRotate)
+	mux.HandleFunc("/api/v1/ai/keys", h.handleKeyVersions)
 }
 
 // --- AI Config ---
@@ -689,4 +698,112 @@ func (h *AIAPIHandler) handleMySQLAIAsk(w http.ResponseWriter, r *http.Request) 
 	}
 
 	monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(result))
+}
+
+// --- Key Rotation ---
+
+// POST /api/v1/ai/keys/rotate — rotate encryption keys for AI provider API keys
+func (h *AIAPIHandler) handleKeyRotate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	if !monitoring.IsRequestAuthorized(h.cfg.Auth, r) {
+		monitoring.RequestAuth(w)
+		return
+	}
+
+	// Check if MongoDB repository is available
+	if h.mongoAIRepo == nil {
+		monitoring.WriteAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("key rotation requires MongoDB AI config repository"))
+		return
+	}
+
+	// Type assert to access RotateKey method (using interface{} to avoid import cycle)
+	type rotateKeyer interface {
+		RotateKey(ctx context.Context, newKeyPath string) error
+		GetKeyVersions() map[int]interface{}
+	}
+
+	rotater, ok := h.mongoAIRepo.(rotateKeyer)
+	if !ok {
+		monitoring.WriteAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("repository does not support key rotation"))
+		return
+	}
+
+	var req struct {
+		NewKeyPath string `json:"newKeyPath"`
+	}
+
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		monitoring.WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid request: %w", err))
+		return
+	}
+
+	if req.NewKeyPath == "" {
+		// Generate default path with version number
+		currentVersions := rotater.GetKeyVersions()
+		maxVersion := 1
+		for v := range currentVersions {
+			if v > maxVersion {
+				maxVersion = v
+			}
+		}
+		req.NewKeyPath = fmt.Sprintf("data/.ai_enc_key_v%d", maxVersion+1)
+	}
+
+	// Perform key rotation
+	if err := rotater.RotateKey(r.Context(), req.NewKeyPath); err != nil {
+		monitoring.WriteAPIError(w, http.StatusInternalServerError, fmt.Errorf("key rotation failed: %w", err))
+		return
+	}
+
+	if h.auditLogger != nil {
+		actor := monitoring.ExtractActorFromRequest(r, h.cfg)
+		_ = h.auditLogger.Log("ai.key_rotated", actor, "ai_config", "", map[string]interface{}{
+			"newKeyPath": req.NewKeyPath,
+		})
+	}
+
+	// Return updated key versions
+	versions := rotater.GetKeyVersions()
+	monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(map[string]interface{}{
+		"message":  "Key rotation completed successfully",
+		"versions": versions,
+	}))
+}
+
+// GET /api/v1/ai/keys — get encryption key version information
+func (h *AIAPIHandler) handleKeyVersions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Check if MongoDB repository is available
+	if h.mongoAIRepo == nil {
+		// Return empty versions for file-based storage
+		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(map[string]interface{}{
+			"versions": map[int]interface{}{},
+			"message":  "Key versioning not available for file-based storage",
+		}))
+		return
+	}
+
+	// Type assert to access GetKeyVersions method
+	type keyVersioner interface {
+		GetKeyVersions() map[int]interface{}
+	}
+
+	versioner, ok := h.mongoAIRepo.(keyVersioner)
+	if !ok {
+		monitoring.WriteAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("repository does not support key versioning"))
+		return
+	}
+
+	versions := versioner.GetKeyVersions()
+	monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(map[string]interface{}{
+		"versions": versions,
+	}))
 }

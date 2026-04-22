@@ -60,6 +60,17 @@ type NotificationChannelConfig struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// ChannelStore defines the persistence operations needed by notification APIs and dispatch.
+type ChannelStore interface {
+	List() []NotificationChannelConfig
+	ListRaw() []NotificationChannelConfig
+	Get(id string) (NotificationChannelConfig, bool)
+	Create(ch NotificationChannelConfig) error
+	Update(id string, ch NotificationChannelConfig) error
+	Delete(id string) error
+	ToggleEnabled(id string, enabled bool) error
+}
+
 // Validate checks the channel config is valid.
 func (c *NotificationChannelConfig) Validate() error {
 	if c.Name == "" {

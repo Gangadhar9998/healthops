@@ -11,14 +11,14 @@ import (
 
 // NotificationAPIHandler handles notification channel API endpoints.
 type NotificationAPIHandler struct {
-	channelStore *NotificationChannelStore
+	channelStore ChannelStore
 	dispatcher   *NotificationDispatcher
 	cfg          *monitoring.Config
 }
 
 // NewNotificationAPIHandler creates a new notification channel API handler.
 func NewNotificationAPIHandler(
-	channelStore *NotificationChannelStore,
+	channelStore ChannelStore,
 	dispatcher *NotificationDispatcher,
 	cfg *monitoring.Config,
 ) *NotificationAPIHandler {

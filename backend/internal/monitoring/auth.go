@@ -11,7 +11,7 @@ import (
 // Public endpoints (login, healthz) are exempt.
 // GET requests require authentication but allow any role.
 // Mutating requests (POST/PUT/PATCH/DELETE) require "admin" role.
-func authMiddleware(cfg AuthConfig, userStore *UserStore, next http.Handler) http.Handler {
+func authMiddleware(cfg AuthConfig, userStore UserStoreBackend, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 

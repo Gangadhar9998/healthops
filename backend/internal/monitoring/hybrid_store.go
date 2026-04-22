@@ -6,6 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
 type HybridStore struct {
@@ -29,8 +31,8 @@ func NewHybridStore(statePath string, checks []CheckConfig, mongoURI, mongoDB, m
 	store := &HybridStore{
 		local:       local,
 		logger:      logger,
-		readTimeout: 750 * time.Millisecond,
-		syncTimeout: 5 * time.Second,
+		readTimeout: 5 * time.Second,
+		syncTimeout: 30 * time.Second,
 	}
 
 	if mongoURI != "" {
@@ -43,7 +45,7 @@ func NewHybridStore(statePath string, checks []CheckConfig, mongoURI, mongoDB, m
 		} else {
 			store.mirror = mirror
 			// Seed local file from Mongo if local is empty (Mongo is primary)
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			mongoState, readErr := mirror.ReadState(ctx)
 			cancel()
 			if readErr == nil && !isEmptyState(mongoState) && isEmptyState(local.Snapshot()) {
@@ -58,10 +60,12 @@ func NewHybridStore(statePath string, checks []CheckConfig, mongoURI, mongoDB, m
 					logger.Printf("Seeded local file from MongoDB (%d checks, %d results)", len(mongoState.Checks), len(mongoState.Results))
 				}
 			} else if readErr == nil {
-				// Sync current local state to Mongo
-				if err := store.syncToMongo(); err != nil && logger != nil {
-					logger.Printf("initial Mongo sync skipped: %v", err)
-				}
+				// Sync current local state to Mongo (non-blocking)
+				go func() {
+					if err := store.syncToMongo(); err != nil && logger != nil {
+						logger.Printf("initial Mongo sync skipped: %v", err)
+					}
+				}()
 			}
 		}
 	}
@@ -77,6 +81,17 @@ func (s *HybridStore) IsMongoDown() bool {
 // HasMongo returns true if MongoDB was configured (even if currently down).
 func (s *HybridStore) HasMongo() bool {
 	return s.mirror != nil
+}
+
+// Client returns the underlying MongoDB client, or nil if not configured.
+func (s *HybridStore) Client() *mongo.Client {
+	if s.mirror == nil {
+		return nil
+	}
+	if mm, ok := s.mirror.(*MongoMirror); ok {
+		return mm.Client()
+	}
+	return nil
 }
 
 // PingMongo checks MongoDB connectivity. Returns nil if reachable.

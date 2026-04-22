@@ -1,7 +1,9 @@
 package monitoring
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -24,10 +26,92 @@ func sanitizeServersForAPI(servers []RemoteServer) []RemoteServer {
 	return out
 }
 
+func cloneServers(servers []RemoteServer) []RemoteServer {
+	if len(servers) == 0 {
+		return nil
+	}
+	out := make([]RemoteServer, len(servers))
+	for i, server := range servers {
+		out[i] = cloneRemoteServer(server)
+	}
+	return out
+}
+
+func (s *Service) cachedServer(id string) (RemoteServer, bool) {
+	for _, srv := range s.cfg.Servers {
+		if srv.ID == id {
+			return srv, true
+		}
+	}
+	return RemoteServer{}, false
+}
+
+func (s *Service) setCachedServer(srv RemoteServer) {
+	for i := range s.cfg.Servers {
+		if s.cfg.Servers[i].ID == srv.ID {
+			s.cfg.Servers[i] = srv
+			return
+		}
+	}
+	s.cfg.Servers = append(s.cfg.Servers, srv)
+}
+
+func (s *Service) setCachedServers(servers []RemoteServer) {
+	s.cfg.Servers = cloneServers(servers)
+}
+
+func (s *Service) removeCachedServer(id string) {
+	filtered := s.cfg.Servers[:0]
+	for _, srv := range s.cfg.Servers {
+		if srv.ID != id {
+			filtered = append(filtered, srv)
+		}
+	}
+	s.cfg.Servers = filtered
+}
+
+func (s *Service) listServers(ctx context.Context) ([]RemoteServer, error) {
+	if s.serverRepo == nil {
+		return cloneServers(s.cfg.Servers), nil
+	}
+	servers, err := s.serverRepo.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.setCachedServers(servers)
+	return cloneServers(servers), nil
+}
+
+func (s *Service) getServer(ctx context.Context, id string) (RemoteServer, error) {
+	if s.serverRepo == nil {
+		if srv, ok := s.cachedServer(id); ok {
+			return srv, nil
+		}
+		return RemoteServer{}, ErrServerNotFound
+	}
+	srv, err := s.serverRepo.Get(ctx, id)
+	if err != nil {
+		return RemoteServer{}, err
+	}
+	s.setCachedServer(srv)
+	return cloneRemoteServer(srv), nil
+}
+
+func isServerReadFallbackError(err error) bool {
+	return err != nil && !errors.Is(err, ErrServerNotFound)
+}
+
 func (s *Service) handleServers(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		WriteAPIResponse(w, http.StatusOK, NewAPIResponse(sanitizeServersForAPI(s.cfg.Servers)))
+		servers, err := s.listServers(r.Context())
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Printf("Warning: falling back to cached servers after repository read failure: %v", err)
+			}
+			servers = cloneServers(s.cfg.Servers)
+		}
+		WriteAPIResponse(w, http.StatusOK, NewAPIResponse(sanitizeServersForAPI(servers)))
 
 	case http.MethodPost:
 		if !IsRequestAuthorized(s.cfg.Auth, r) {
@@ -48,14 +132,28 @@ func (s *Service) handleServers(w http.ResponseWriter, r *http.Request) {
 			WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
-		// Check for duplicates
-		for _, existing := range s.cfg.Servers {
-			if existing.ID == srv.ID {
-				WriteAPIError(w, http.StatusConflict, fmt.Errorf("server %q already exists", srv.ID))
+
+		if s.serverRepo != nil {
+			if _, err := s.serverRepo.Create(r.Context(), srv); err != nil {
+				switch {
+				case errors.Is(err, ErrServerAlreadyExists), errors.Is(err, ErrServerExists):
+					WriteAPIError(w, http.StatusConflict, fmt.Errorf("server %q already exists", srv.ID))
+				case errors.Is(err, ErrServerRepoOffline), errors.Is(err, ErrServerRepositoryNotConfigured):
+					WriteAPIError(w, http.StatusServiceUnavailable, err)
+				default:
+					WriteAPIError(w, http.StatusInternalServerError, err)
+				}
 				return
 			}
+		} else {
+			for _, existing := range s.cfg.Servers {
+				if existing.ID == srv.ID {
+					WriteAPIError(w, http.StatusConflict, fmt.Errorf("server %q already exists", srv.ID))
+					return
+				}
+			}
 		}
-		s.cfg.Servers = append(s.cfg.Servers, srv)
+		s.setCachedServer(srv)
 
 		// Auto-create SSH health check for the new server (CPU, memory, disk, load, uptime, IOPS)
 		autoCheck := s.buildAutoSSHCheck(srv)
@@ -121,13 +219,26 @@ func (s *Service) handleServerByID(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		for _, srv := range s.cfg.Servers {
-			if srv.ID == id {
-				WriteAPIResponse(w, http.StatusOK, NewAPIResponse(sanitizeServerForAPI(srv)))
+		srv, err := s.getServer(r.Context(), id)
+		if err != nil {
+			if isServerReadFallbackError(err) {
+				if cached, ok := s.cachedServer(id); ok {
+					WriteAPIResponse(w, http.StatusOK, NewAPIResponse(sanitizeServerForAPI(cached)))
+					return
+				}
+			}
+			if errors.Is(err, ErrServerNotFound) {
+				WriteAPIError(w, http.StatusNotFound, fmt.Errorf("server %q not found", id))
 				return
 			}
+			if errors.Is(err, ErrServerRepoOffline) || errors.Is(err, ErrServerRepositoryNotConfigured) {
+				WriteAPIError(w, http.StatusServiceUnavailable, err)
+				return
+			}
+			WriteAPIError(w, http.StatusInternalServerError, err)
+			return
 		}
-		WriteAPIError(w, http.StatusNotFound, fmt.Errorf("server %q not found", id))
+		WriteAPIResponse(w, http.StatusOK, NewAPIResponse(sanitizeServerForAPI(srv)))
 
 	case http.MethodPut, http.MethodPatch:
 		if !IsRequestAuthorized(s.cfg.Auth, r) {
@@ -141,27 +252,39 @@ func (s *Service) handleServerByID(w http.ResponseWriter, r *http.Request) {
 		}
 		srv.ID = id
 		srv.applyDefaults()
+		existing, err := s.getServer(r.Context(), id)
+		if err != nil {
+			switch {
+			case errors.Is(err, ErrServerNotFound):
+				WriteAPIError(w, http.StatusNotFound, fmt.Errorf("server %q not found", id))
+			case errors.Is(err, ErrServerRepoOffline) || errors.Is(err, ErrServerRepositoryNotConfigured):
+				WriteAPIError(w, http.StatusServiceUnavailable, err)
+			default:
+				WriteAPIError(w, http.StatusInternalServerError, err)
+			}
+			return
+		}
+		if srv.Password == "********" {
+			srv.Password = existing.Password
+		}
 		if err := srv.validate(); err != nil {
 			WriteAPIError(w, http.StatusBadRequest, err)
 			return
 		}
-
-		found := false
-		for i, existing := range s.cfg.Servers {
-			if existing.ID == id {
-				// Preserve password if masked value was sent back
-				if srv.Password == "********" {
-					srv.Password = existing.Password
+		if s.serverRepo != nil {
+			if _, err := s.serverRepo.Update(r.Context(), srv); err != nil {
+				switch {
+				case errors.Is(err, ErrServerNotFound):
+					WriteAPIError(w, http.StatusNotFound, fmt.Errorf("server %q not found", id))
+				case errors.Is(err, ErrServerRepoOffline) || errors.Is(err, ErrServerRepositoryNotConfigured):
+					WriteAPIError(w, http.StatusServiceUnavailable, err)
+				default:
+					WriteAPIError(w, http.StatusInternalServerError, err)
 				}
-				s.cfg.Servers[i] = srv
-				found = true
-				break
+				return
 			}
 		}
-		if !found {
-			WriteAPIError(w, http.StatusNotFound, fmt.Errorf("server %q not found", id))
-			return
-		}
+		s.setCachedServer(srv)
 
 		if s.auditLogger != nil {
 			actor := ExtractActorFromRequest(r, s.cfg)
@@ -180,27 +303,32 @@ func (s *Service) handleServerByID(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Check if any checks reference this server
-		for _, check := range s.cfg.Checks {
+		for _, check := range s.store.Snapshot().Checks {
 			if check.ServerId == id {
 				WriteAPIError(w, http.StatusConflict, fmt.Errorf("cannot delete server %q: check %q references it", id, check.ID))
 				return
 			}
 		}
 
-		found := false
-		filtered := make([]RemoteServer, 0, len(s.cfg.Servers))
-		for _, srv := range s.cfg.Servers {
-			if srv.ID == id {
-				found = true
-				continue
+		if s.serverRepo != nil {
+			if err := s.serverRepo.Delete(r.Context(), id); err != nil {
+				switch {
+				case errors.Is(err, ErrServerNotFound):
+					WriteAPIError(w, http.StatusNotFound, fmt.Errorf("server %q not found", id))
+				case errors.Is(err, ErrServerRepoOffline) || errors.Is(err, ErrServerRepositoryNotConfigured):
+					WriteAPIError(w, http.StatusServiceUnavailable, err)
+				default:
+					WriteAPIError(w, http.StatusInternalServerError, err)
+				}
+				return
 			}
-			filtered = append(filtered, srv)
+		} else {
+			if _, ok := s.cachedServer(id); !ok {
+				WriteAPIError(w, http.StatusNotFound, fmt.Errorf("server %q not found", id))
+				return
+			}
 		}
-		if !found {
-			WriteAPIError(w, http.StatusNotFound, fmt.Errorf("server %q not found", id))
-			return
-		}
-		s.cfg.Servers = filtered
+		s.removeCachedServer(id)
 
 		if s.auditLogger != nil {
 			actor := ExtractActorFromRequest(r, s.cfg)
@@ -232,14 +360,28 @@ func (s *Service) handleServerTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var srv *RemoteServer
-	for i := range s.cfg.Servers {
-		if s.cfg.Servers[i].ID == id {
-			srv = &s.cfg.Servers[i]
-			break
+	srv, err := s.getServer(r.Context(), id)
+	if err != nil {
+		if isServerReadFallbackError(err) {
+			if cached, ok := s.cachedServer(id); ok {
+				srv = cached
+			} else {
+				if errors.Is(err, ErrServerRepoOffline) || errors.Is(err, ErrServerRepositoryNotConfigured) {
+					WriteAPIError(w, http.StatusServiceUnavailable, err)
+				} else {
+					WriteAPIError(w, http.StatusInternalServerError, err)
+				}
+				return
+			}
+		} else if errors.Is(err, ErrServerNotFound) {
+			WriteAPIError(w, http.StatusNotFound, fmt.Errorf("server %q not found", id))
+			return
+		} else {
+			WriteAPIError(w, http.StatusInternalServerError, err)
+			return
 		}
 	}
-	if srv == nil {
+	if srv.ID == "" {
 		WriteAPIError(w, http.StatusNotFound, fmt.Errorf("server %q not found", id))
 		return
 	}

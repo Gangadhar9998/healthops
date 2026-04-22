@@ -18,7 +18,7 @@ import (
 type AIService struct {
 	mu sync.RWMutex
 
-	configStore  *AIConfigStore
+	configStore  AIConfigStoreInterface
 	aiQueue      *FileAIQueue
 	incidentRepo monitoring.IncidentRepository
 	snapshotRepo monitoring.IncidentSnapshotRepository
@@ -33,7 +33,7 @@ type AIService struct {
 
 // NewAIService creates the AI orchestrator.
 func NewAIService(
-	configStore *AIConfigStore,
+	configStore AIConfigStoreInterface,
 	aiQueue *FileAIQueue,
 	incidentRepo monitoring.IncidentRepository,
 	snapshotRepo monitoring.IncidentSnapshotRepository,

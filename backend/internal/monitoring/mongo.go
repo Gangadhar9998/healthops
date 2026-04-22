@@ -5,11 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 type MongoMirror struct {
@@ -33,16 +34,28 @@ func NewMongoMirror(uri, dbName, prefix string, retentionDays int) (*MongoMirror
 		prefix = "healthops"
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	// Force IPv4: replace localhost with 127.0.0.1 to avoid IPv6 socket issues on macOS
+	uri = strings.ReplaceAll(uri, "localhost", "127.0.0.1")
 
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
+	// Configure client options with longer timeouts for remote connections
+	clientOpts := options.Client().
+		ApplyURI(uri).
+		SetServerSelectionTimeout(10 * time.Second).
+		SetConnectTimeout(10 * time.Second).
+		SetMaxPoolSize(100)
+
+	client, err := mongo.Connect(clientOpts)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("mongo connect failed: %w", err)
 	}
-	if err := client.Ping(ctx, nil); err != nil {
+
+	// Ping with timeout to verify connection
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer pingCancel()
+
+	if err := client.Ping(pingCtx, nil); err != nil {
 		_ = client.Disconnect(context.Background())
-		return nil, err
+		return nil, fmt.Errorf("mongo ping failed: %w", err)
 	}
 
 	mirror := &MongoMirror{
@@ -55,9 +68,13 @@ func NewMongoMirror(uri, dbName, prefix string, retentionDays int) (*MongoMirror
 		retentionDays: retentionDays,
 	}
 
-	if err := mirror.ensureIndexes(ctx); err != nil {
-		_ = client.Disconnect(context.Background())
-		return nil, err
+	// Create indexes with separate timeout - don't fail if it takes too long
+	indexCtx, indexCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer indexCancel()
+
+	if err := mirror.ensureIndexes(indexCtx); err != nil {
+		// Log but don't fail - indexes will be created in background
+		fmt.Printf("WARNING: MongoDB index creation deferred: %v\n", err)
 	}
 
 	return mirror, nil
@@ -245,7 +262,8 @@ func (m *MongoMirror) upsertState(ctx context.Context, state State) error {
 	doc := bson.M{
 		"_id":       "state",
 		"checks":    state.Checks,
-		"results":   state.Results,
+		// Don't store results here - they're already in the results collection
+		// Storing results in state document causes 16MB document size limit errors
 		"lastRunAt": state.LastRunAt,
 		"updatedAt": state.UpdatedAt,
 	}
@@ -271,4 +289,12 @@ func (m *MongoMirror) Ping(ctx context.Context) error {
 		return fmt.Errorf("mongo client is nil")
 	}
 	return m.client.Ping(ctx, nil)
+}
+
+// Client returns the underlying MongoDB client
+func (m *MongoMirror) Client() *mongo.Client {
+	if m == nil {
+		return nil
+	}
+	return m.client
 }

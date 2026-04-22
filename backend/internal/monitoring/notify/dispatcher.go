@@ -31,7 +31,7 @@ type NotificationPayload struct {
 
 // NotificationDispatcher evaluates channel filters and dispatches notifications.
 type NotificationDispatcher struct {
-	channelStore *NotificationChannelStore
+	channelStore ChannelStore
 	outbox       NotificationOutboxRepository
 	logger       *log.Logger
 	httpClient   *http.Client
@@ -59,7 +59,7 @@ type pendingNotification struct {
 
 // NewNotificationDispatcher creates a dispatcher wired to the channel store.
 func NewNotificationDispatcher(
-	channelStore *NotificationChannelStore,
+	channelStore ChannelStore,
 	outbox NotificationOutboxRepository,
 	logger *log.Logger,
 ) *NotificationDispatcher {

@@ -72,6 +72,17 @@ type UpdateUserRequest struct {
 	Email       *string `json:"email,omitempty"`
 }
 
+// UserStoreBackend defines the user-management operations needed by auth and APIs.
+type UserStoreBackend interface {
+	Authenticate(username, password string) (*User, error)
+	IsUsingDefaultCredentials() bool
+	List() []User
+	Get(id string) (*User, bool)
+	Create(req CreateUserRequest) (*User, error)
+	Update(id string, req UpdateUserRequest) (*User, error)
+	Delete(id string) error
+}
+
 // ---------------------------------------------------------------------------
 // JWT (minimal HMAC-SHA256)
 // ---------------------------------------------------------------------------
@@ -97,6 +108,11 @@ func initJWTSecret(dataDir string) {
 		panic("failed to generate JWT secret: " + err.Error())
 	}
 	_ = os.WriteFile(keyPath, jwtSecret, 0600)
+}
+
+// InitJWTSecret prepares the JWT secret for non-file-backed user stores.
+func InitJWTSecret(dataDir string) {
+	initJWTSecret(dataDir)
 }
 
 func signJWT(claims JWTClaims) (string, error) {
@@ -410,10 +426,10 @@ func (s *UserStore) Delete(id string) error {
 // ---------------------------------------------------------------------------
 
 type UserAPIHandler struct {
-	store *UserStore
+	store UserStoreBackend
 }
 
-func NewUserAPIHandler(store *UserStore) *UserAPIHandler {
+func NewUserAPIHandler(store UserStoreBackend) *UserAPIHandler {
 	return &UserAPIHandler{store: store}
 }
 

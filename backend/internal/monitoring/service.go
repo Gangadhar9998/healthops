@@ -32,9 +32,12 @@ type Service struct {
 	aiRoutes          RouteRegistrar
 	notifyRoutes      RouteRegistrar
 	snapshotRepo      IncidentSnapshotRepository
-	userStore         *UserStore
+	userStore         UserStoreBackend
 	userAPI           *UserAPIHandler
 	serverMetricsRepo *ServerMetricsRepository
+	serverRepo        ServerRepository
+	degradedMode      *DegradedMode
+	// alertRuleRepo     repositories.AlertRuleRepository // TODO: uncomment when needed
 }
 
 func NewService(cfg *Config, store Store, logger *log.Logger) *Service {
@@ -54,6 +57,16 @@ func NewService(cfg *Config, store Store, logger *log.Logger) *Service {
 		scheduler: NewCheckScheduler(cfg, store, runner, logger),
 		metrics:   metrics,
 		logger:    logger,
+	}
+
+	// Initialize degraded mode if store supports MongoDB health checks
+	if hybridStore, ok := store.(*HybridStore); ok && hybridStore.HasMongo() {
+		// Pass nil incident manager for now, will be set in SetIncidentManager
+		svc.degradedMode = NewDegradedMode(
+			func(ctx context.Context) error { return hybridStore.PingMongo(ctx) },
+			nil,
+			logger,
+		)
 	}
 
 	// Initialize audit logger
@@ -136,6 +149,10 @@ func NewService(cfg *Config, store Store, logger *log.Logger) *Service {
 // SetIncidentManager sets the incident manager for the service
 func (s *Service) SetIncidentManager(im *IncidentManager) {
 	s.incidentManager = im
+	// Also set incident manager in degraded mode
+	if s.degradedMode != nil {
+		s.degradedMode.SetIncidentManager(im)
+	}
 }
 
 // SetAuditLogger sets the audit logger for the service
@@ -174,8 +191,19 @@ func (s *Service) SetServerMetricsRepo(repo *ServerMetricsRepository) {
 	s.runner.SetServerMetricsRepo(repo)
 }
 
+// SetServerRepo sets the repository backing remote server configuration.
+func (s *Service) SetServerRepo(repo ServerRepository) {
+	s.serverRepo = repo
+}
+
+// SetAlertRuleRepo sets the alert rule repository.
+// TODO: Uncomment when needed
+// func (s *Service) SetAlertRuleRepo(repo repositories.AlertRuleRepository) {
+// 	s.alertRuleRepo = repo
+// }
+
 // SetUserStore sets the user store and creates the user API handler.
-func (s *Service) SetUserStore(us *UserStore) {
+func (s *Service) SetUserStore(us UserStoreBackend) {
 	s.userStore = us
 	s.userAPI = NewUserAPIHandler(us)
 }
@@ -189,6 +217,7 @@ func (s *Service) Run(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/readyz", s.handleReadyz)
+	mux.HandleFunc("/api/v1/system/status", s.handleSystemStatus)
 	mux.HandleFunc("/api/v1/checks", s.handleChecks)
 	mux.HandleFunc("/api/v1/checks/", s.handleCheckByID)
 	mux.HandleFunc("/api/v1/runs", s.handleRun)
@@ -266,6 +295,12 @@ func (s *Service) Run(ctx context.Context) error {
 
 	// Apply middlewares: first body limit, then rate limit, then metrics, then logging, then auth
 	var handler http.Handler = mux
+
+	// Apply degraded mode middleware FIRST to block writes before other processing
+	if s.degradedMode != nil {
+		handler = s.degradedMode.Middleware(handler)
+	}
+
 	handler = maxBodyMiddleware(1<<20, handler)              // 1 MB request body limit
 	handler = rateLimitMiddleware(100, time.Minute, handler) // 100 req/min per IP
 	handler = metricsMiddleware(s.metrics, handler)
@@ -294,6 +329,12 @@ func (s *Service) Run(ctx context.Context) error {
 	s.scheduler.Start()
 	defer s.scheduler.Stop()
 
+	// Start degraded mode health checks
+	if s.degradedMode != nil {
+		go s.degradedMode.StartHealthCheck(ctx, 30*time.Second)
+		defer s.degradedMode.Stop()
+	}
+
 	select {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -312,7 +353,35 @@ func (s *Service) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]string{"status": "ok"}))
 }
 
+func (s *Service) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
+	if s.degradedMode == nil {
+		WriteAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]bool{"healthy": true}))
+		return
+	}
+	status := s.degradedMode.GetStatus()
+	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(status))
+}
+
 func (s *Service) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	// Check if system is degraded
+	if s.degradedMode != nil && s.degradedMode.IsDegraded() {
+		status := s.degradedMode.GetStatus()
+		checks := map[string]interface{}{
+			"status": "unhealthy",
+			"checks": map[string]interface{}{
+				"database": map[string]interface{}{
+					"status": "down",
+					"error":  status.LastError,
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(checks)
+		return
+	}
+
+	// System is healthy
 	state := s.store.Snapshot()
 	WriteAPIResponse(w, http.StatusOK, NewAPIResponse(map[string]interface{}{
 		"status":    "ready",
