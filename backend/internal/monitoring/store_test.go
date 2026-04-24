@@ -70,13 +70,17 @@ func TestNewFileStoreLoadsExistingState(t *testing.T) {
 	}
 }
 
-func TestNewFileStoreConfigSyncRemovesOldChecks(t *testing.T) {
+func TestNewFileStoreIgnoresConfigWhenStateExists(t *testing.T) {
+	// Config checks are SEED ONLY: when a state file already exists, the
+	// persisted state is the single source of truth. Config additions,
+	// updates, and removals must NOT touch existing state. This guarantees
+	// that checks added at runtime via the API survive restarts.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.json")
 
 	existingState := State{
 		Checks: []CheckConfig{
-			{ID: "old-check", Name: "Old", Type: "api", Target: "https://old.com"},
+			{ID: "user-added", Name: "User added via API", Type: "api", Target: "https://user.com"},
 		},
 	}
 	data := mustMarshalJSON(t, existingState)
@@ -84,18 +88,18 @@ func TestNewFileStoreConfigSyncRemovesOldChecks(t *testing.T) {
 		t.Fatalf("write existing state: %v", err)
 	}
 
-	// Provide a different check in config — old check should be removed
-	store, err := NewFileStore(path, []CheckConfig{{ID: "new-check", Name: "New", Type: "api", Target: "https://new.com"}})
+	// Config has a totally different check — must be ignored.
+	store, err := NewFileStore(path, []CheckConfig{{ID: "config-only", Name: "Config", Type: "api", Target: "https://cfg.com"}})
 	if err != nil {
 		t.Fatalf("new file store: %v", err)
 	}
 
 	state := store.Snapshot()
 	if len(state.Checks) != 1 {
-		t.Errorf("expected 1 check, got %d", len(state.Checks))
+		t.Fatalf("expected 1 check (existing only), got %d", len(state.Checks))
 	}
-	if state.Checks[0].ID != "new-check" {
-		t.Errorf("expected new-check, got %q", state.Checks[0].ID)
+	if state.Checks[0].ID != "user-added" {
+		t.Errorf("expected user-added preserved, got %q", state.Checks[0].ID)
 	}
 }
 

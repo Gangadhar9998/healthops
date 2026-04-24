@@ -107,7 +107,7 @@ See `backend/docs/api-reference.md` for the full reference with request/response
 
 ### Configuration
 
-**Config file** (`backend/config/default.json`):
+**Config file** (`backend/config/default.json`) — *seed only on first run*; once `data/state.json` exists, it is the single source of truth and config edits are ignored:
 ```json
 {
   "server": {
@@ -132,7 +132,7 @@ See `backend/docs/api-reference.md` for the full reference with request/response
 - `MONGODB_COLLECTION_PREFIX` - Mongo collection prefix (default: `healthops`)
 - `{check.mysql.dsnEnv}` - MySQL DSN per check (never logged)
 
-The `backend/config/default.json` contains the check definitions.
+The `backend/config/default.json` provides the initial seed checks for the very first run. After that, all checks (including MySQL, SSH, etc.) are managed exclusively via the API (`/api/v1/checks`) or UI and persisted in `data/state.json` (with optional MongoDB mirror). To add a check at runtime, `POST /api/v1/checks` — do not edit `default.json` (the change will be ignored on restart).
 
 ## Development Guidelines
 
@@ -152,7 +152,7 @@ To add a new check type:
 1. Add the type string to the validate switch in `config.go`
 2. Add a `run{Type}` method in `runner.go` that executes the check and populates `result.Metrics`
 3. Add a case for the new type in `executeCheck` in `runner.go`
-4. Update `backend/config/default.json` with example checks
+4. (Optional) Add an example check to `backend/config/default.json` for first-run seeding only — runtime checks should be created via the API
 5. If the check type needs custom alert rules, add them in a `{type}_rules.go` file
 
 ### BYOK AI Integration

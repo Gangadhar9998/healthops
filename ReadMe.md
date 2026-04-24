@@ -248,7 +248,7 @@ See the [Deployment Guide](docs/deployment-guide.md) for full details on all con
 
 ### Check Configuration
 
-Checks are defined in `backend/config/default.json`. Each check supports:
+Checks are seeded from `backend/config/default.json` on the very first run, then managed via the API (`/api/v1/checks`) and persisted in `data/state.json`. Edits to `default.json` are ignored once state exists. Each check supports:
 
 ```json
 {

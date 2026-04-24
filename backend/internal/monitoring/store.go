@@ -27,41 +27,21 @@ func NewFileStore(path string, checks []CheckConfig) (*FileStore, error) {
 	}
 
 	store := &FileStore{path: path}
+	stateExists := false
 	if raw, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(raw, &store.state); err != nil {
 			return nil, fmt.Errorf("parse state: %w", err)
 		}
+		stateExists = true
 	}
 
-	if len(store.state.Checks) == 0 && len(checks) > 0 {
+	// Config checks are SEED ONLY: they populate state on first run when no
+	// state file exists yet. After that, the persisted state is the single
+	// source of truth — checks are managed exclusively via the API/UI and
+	// survive restarts. This prevents config edits from silently deleting or
+	// overwriting user-managed checks (including any added at runtime).
+	if !stateExists && len(checks) > 0 {
 		store.state.Checks = cloneChecks(checks)
-	} else if len(checks) > 0 {
-		// Merge config checks into existing state: add new checks, update existing ones
-		existing := map[string]int{}
-		for i, c := range store.state.Checks {
-			existing[c.ID] = i
-		}
-		for _, c := range checks {
-			if idx, ok := existing[c.ID]; ok {
-				// Update existing check config (preserves results in state)
-				store.state.Checks[idx] = c
-			} else {
-				// New check from config — append
-				store.state.Checks = append(store.state.Checks, c)
-			}
-		}
-		// Remove checks that are no longer in config
-		configIDs := map[string]struct{}{}
-		for _, c := range checks {
-			configIDs[c.ID] = struct{}{}
-		}
-		filtered := store.state.Checks[:0]
-		for _, c := range store.state.Checks {
-			if _, ok := configIDs[c.ID]; ok {
-				filtered = append(filtered, c)
-			}
-		}
-		store.state.Checks = filtered
 	}
 	store.state.UpdatedAt = time.Now().UTC()
 

@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 - `backend/` is the Go service. `backend/cmd/healthops/main.go` is the entrypoint.
 - `backend/internal/monitoring/` holds config, store, runner, HTTP handlers, MySQL monitoring, AI BYOK layer, incidents, analytics, and alert rules.
-- `backend/config/default.json` defines the initial monitored checks and runtime defaults.
+- `backend/config/default.json` is the **first-run seed** for runtime defaults and any starter checks. After the first run, the persisted state (`backend/data/state.json`, optionally mirrored to MongoDB) is the single source of truth — checks are managed via the API/UI and survive restarts. Edits to `default.json` are ignored once state exists.
 - `backend/data/` stores the file-backed state: `state.json`, JSONL repositories, AI config, encryption keys.
 - `backend/docs/` holds API reference, migration specs, security audit, and release checklist.
 - `frontend/` is reserved for the monitoring UI and should stay separate from backend code.

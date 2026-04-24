@@ -92,7 +92,7 @@ Incidents are auto-created on alert and auto-resolved on recovery. Statuses: `op
 1. **Understand the requirement**: What service/endpoint/process needs monitoring? What failure modes matter?
 2. **Choose the right check type**: Match the monitoring need to `api`, `tcp`, `process`, `command`, or `log`.
 3. **Configure with safe defaults**: Set timeouts, retries, cooldowns, and thresholds appropriate for the target.
-4. **Add to config**: Edit `backend/config/default.json` to add the check, or use the API endpoint `POST /api/v1/checks`.
+4. **Add the check**: Use the API (`POST /api/v1/checks`) or the UI. `backend/config/default.json` is only consulted on first run when no state exists; runtime edits to it are ignored.
 5. **Set up alerting**: Create alert rules that match the check IDs with appropriate severity and cooldown.
 6. **Validate**: Run `cd backend && go run ./cmd/healthops` and trigger a run via `POST /api/v1/runs` to verify.
 
