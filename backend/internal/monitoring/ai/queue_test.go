@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"medics-health-check/backend/internal/monitoring"
+	"medics-health-check/backend/internal/util/jsonl"
 )
 
 func TestFileAIQueue_EnqueueAndListPending(t *testing.T) {
@@ -150,7 +151,7 @@ func TestFileAIQueue_PruneBefore(t *testing.T) {
 		Status: "completed", CreatedAt: now.Add(-48 * time.Hour),
 	}
 	q.queue = append(q.queue, oldItem)
-	_ = monitoring.AppendJSONLFile(q.queuePath, oldItem)
+	_ = jsonl.Append(q.queuePath, oldItem)
 	q.mu.Unlock()
 
 	_ = q.Enqueue("new", "v1") // recent

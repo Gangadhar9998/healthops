@@ -1,6 +1,7 @@
 package monitoring
 
 import (
+	"medics-health-check/backend/internal/util/jsonl"
 	"os"
 	"path/filepath"
 	"sort"
@@ -47,7 +48,7 @@ func (r *ServerMetricsRepository) filePath(serverID string) string {
 func (r *ServerMetricsRepository) Save(snap ServerSnapshot) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return AppendJSONLFile(r.filePath(snap.ServerID), snap)
+	return jsonl.Append(r.filePath(snap.ServerID), snap)
 }
 
 // GetSnapshots returns snapshots for a server within a time range.
@@ -55,7 +56,7 @@ func (r *ServerMetricsRepository) GetSnapshots(serverID string, since, until tim
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	all, err := LoadJSONLFile[ServerSnapshot](r.filePath(serverID))
+	all, err := jsonl.Load[ServerSnapshot](r.filePath(serverID))
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +81,7 @@ func (r *ServerMetricsRepository) GetLatest(serverID string) (*ServerSnapshot, e
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	all, err := LoadJSONLFile[ServerSnapshot](r.filePath(serverID))
+	all, err := jsonl.Load[ServerSnapshot](r.filePath(serverID))
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +117,7 @@ func (r *ServerMetricsRepository) Prune(cutoff time.Time) (int, error) {
 			continue
 		}
 		path := filepath.Join(r.dir, e.Name())
-		all, err := LoadJSONLFile[ServerSnapshot](path)
+		all, err := jsonl.Load[ServerSnapshot](path)
 		if err != nil {
 			continue
 		}
@@ -128,7 +129,7 @@ func (r *ServerMetricsRepository) Prune(cutoff time.Time) (int, error) {
 		}
 		pruned := len(all) - len(kept)
 		if pruned > 0 {
-			_ = RewriteJSONLFile(path, kept)
+			_ = jsonl.Rewrite(path, kept)
 			totalPruned += pruned
 		}
 	}

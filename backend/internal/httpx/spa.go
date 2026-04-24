@@ -1,4 +1,5 @@
-package monitoring
+// Package httpx provides reusable HTTP middleware and handlers (SPA serving, rate limiting, etc.).
+package httpx
 
 import (
 	"net/http"

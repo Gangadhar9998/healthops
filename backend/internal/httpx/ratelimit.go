@@ -1,4 +1,4 @@
-package monitoring
+package httpx
 
 import (
 	"net"
@@ -64,9 +64,9 @@ func (rl *rateLimiter) cleanup() {
 	}
 }
 
-// rateLimitMiddleware enforces per-IP rate limiting.
+// RateLimit enforces per-IP rate limiting.
 // rate is the max requests per window. Returns 429 when exceeded.
-func rateLimitMiddleware(rate int, window time.Duration, next http.Handler) http.Handler {
+func RateLimit(rate int, window time.Duration, next http.Handler) http.Handler {
 	limiter := newRateLimiter(rate, window)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

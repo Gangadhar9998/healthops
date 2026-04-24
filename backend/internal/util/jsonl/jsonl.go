@@ -1,4 +1,5 @@
-package monitoring
+// Package jsonl provides generic helpers for reading and writing JSON Lines files.
+package jsonl
 
 import (
 	"bufio"
@@ -6,10 +7,8 @@ import (
 	"os"
 )
 
-// --- JSONL helpers (generic, reusable) ---
-
-// LoadJSONLFile reads a JSONL file and returns a slice of items.
-func LoadJSONLFile[T any](path string) ([]T, error) {
+// Load reads a JSONL file and returns a slice of items.
+func Load[T any](path string) ([]T, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -36,8 +35,8 @@ func LoadJSONLFile[T any](path string) ([]T, error) {
 	return items, scanner.Err()
 }
 
-// AppendJSONLFile appends a single item as a JSON line to the file.
-func AppendJSONLFile[T any](path string, item T) error {
+// Append appends a single item as a JSON line to the file.
+func Append[T any](path string, item T) error {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
@@ -53,8 +52,8 @@ func AppendJSONLFile[T any](path string, item T) error {
 	return err
 }
 
-// RewriteJSONLFile atomically rewrites a JSONL file with the given items.
-func RewriteJSONLFile[T any](path string, items []T) error {
+// Rewrite atomically rewrites a JSONL file with the given items.
+func Rewrite[T any](path string, items []T) error {
 	tmp := path + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"medics-health-check/backend/internal/httpx"
 	"net/http"
 	"os"
 	"strings"
@@ -288,7 +289,7 @@ func (s *Service) Run(ctx context.Context) error {
 	if frontendDir == "" {
 		frontendDir = "frontend/dist"
 	}
-	if spaHandler := NewSPAHandler(frontendDir); spaHandler != nil {
+	if spaHandler := httpx.NewSPAHandler(frontendDir); spaHandler != nil {
 		mux.Handle("/", spaHandler)
 		s.logger.Printf("serving frontend from %s", frontendDir)
 	}
@@ -301,8 +302,8 @@ func (s *Service) Run(ctx context.Context) error {
 		handler = s.degradedMode.Middleware(handler)
 	}
 
-	handler = maxBodyMiddleware(1<<20, handler)              // 1 MB request body limit
-	handler = rateLimitMiddleware(100, time.Minute, handler) // 100 req/min per IP
+	handler = maxBodyMiddleware(1<<20, handler)          // 1 MB request body limit
+	handler = httpx.RateLimit(100, time.Minute, handler) // 100 req/min per IP
 	handler = metricsMiddleware(s.metrics, handler)
 	handler = loggingMiddleware(s.logger, handler)
 	if s.userStore != nil {

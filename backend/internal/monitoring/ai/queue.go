@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"medics-health-check/backend/internal/monitoring"
+	"medics-health-check/backend/internal/util/jsonl"
 )
 
 // AIQueueRepository defines generic AI analysis queue operations.
@@ -44,12 +45,12 @@ func NewFileAIQueue(dataDir string) (*FileAIQueue, error) {
 	}
 
 	var err error
-	q.queue, err = monitoring.LoadJSONLFile[monitoring.AIQueueItem](queuePath)
+	q.queue, err = jsonl.Load[monitoring.AIQueueItem](queuePath)
 	if err != nil {
 		return nil, fmt.Errorf("load ai queue: %w", err)
 	}
 
-	q.results, err = monitoring.LoadJSONLFile[monitoring.AIAnalysisResult](resultsPath)
+	q.results, err = jsonl.Load[monitoring.AIAnalysisResult](resultsPath)
 	if err != nil {
 		return nil, fmt.Errorf("load ai results: %w", err)
 	}
@@ -76,7 +77,7 @@ func (q *FileAIQueue) Enqueue(incidentID string, promptVersion string) error {
 	}
 
 	q.queue = append(q.queue, item)
-	return monitoring.AppendJSONLFile(q.queuePath, item)
+	return jsonl.Append(q.queuePath, item)
 }
 
 func (q *FileAIQueue) ClaimPending(limit int) ([]monitoring.AIQueueItem, error) {
@@ -101,7 +102,7 @@ func (q *FileAIQueue) ClaimPending(limit int) ([]monitoring.AIQueueItem, error) 
 	}
 
 	if len(claimed) > 0 {
-		if err := monitoring.RewriteJSONLFile(q.queuePath, q.queue); err != nil {
+		if err := jsonl.Rewrite(q.queuePath, q.queue); err != nil {
 			return nil, fmt.Errorf("persist claimed items: %w", err)
 		}
 	}
@@ -134,10 +135,10 @@ func (q *FileAIQueue) Complete(incidentID string, result monitoring.AIAnalysisRe
 
 	q.results = append(q.results, result)
 
-	if err := monitoring.RewriteJSONLFile(q.queuePath, q.queue); err != nil {
+	if err := jsonl.Rewrite(q.queuePath, q.queue); err != nil {
 		return fmt.Errorf("persist queue: %w", err)
 	}
-	if err := monitoring.AppendJSONLFile(q.resultsPath, result); err != nil {
+	if err := jsonl.Append(q.resultsPath, result); err != nil {
 		return fmt.Errorf("persist result: %w", err)
 	}
 	return nil
@@ -160,7 +161,7 @@ func (q *FileAIQueue) Fail(incidentID string, reason string) error {
 		return fmt.Errorf("no pending/processing AI queue item for incident %s", incidentID)
 	}
 
-	return monitoring.RewriteJSONLFile(q.queuePath, q.queue)
+	return jsonl.Rewrite(q.queuePath, q.queue)
 }
 
 func (q *FileAIQueue) PruneBefore(cutoff time.Time) error {
@@ -183,10 +184,10 @@ func (q *FileAIQueue) PruneBefore(cutoff time.Time) error {
 	}
 	q.results = prunedResults
 
-	if err := monitoring.RewriteJSONLFile(q.queuePath, q.queue); err != nil {
+	if err := jsonl.Rewrite(q.queuePath, q.queue); err != nil {
 		return err
 	}
-	return monitoring.RewriteJSONLFile(q.resultsPath, q.results)
+	return jsonl.Rewrite(q.resultsPath, q.results)
 }
 
 // GetResults returns AI analysis results for a specific incident.

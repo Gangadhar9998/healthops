@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"medics-health-check/backend/internal/monitoring"
+	"medics-health-check/backend/internal/util/jsonl"
 )
 
 // FileMySQLRepository implements monitoring.MySQLMetricsRepository with JSONL file backing.
@@ -34,12 +35,12 @@ func NewFileMySQLRepository(dataDir string) (*FileMySQLRepository, error) {
 	}
 
 	var err error
-	repo.samples, err = monitoring.LoadJSONLFile[monitoring.MySQLSample](samplesPath)
+	repo.samples, err = jsonl.Load[monitoring.MySQLSample](samplesPath)
 	if err != nil {
 		return nil, fmt.Errorf("load samples: %w", err)
 	}
 
-	repo.deltas, err = monitoring.LoadJSONLFile[monitoring.MySQLDelta](deltasPath)
+	repo.deltas, err = jsonl.Load[monitoring.MySQLDelta](deltasPath)
 	if err != nil {
 		return nil, fmt.Errorf("load deltas: %w", err)
 	}
@@ -56,7 +57,7 @@ func (r *FileMySQLRepository) AppendSample(sample monitoring.MySQLSample) (strin
 	}
 
 	r.samples = append(r.samples, sample)
-	if err := monitoring.AppendJSONLFile(r.samplesDir, sample); err != nil {
+	if err := jsonl.Append(r.samplesDir, sample); err != nil {
 		return "", fmt.Errorf("append sample: %w", err)
 	}
 	return sample.SampleID, nil
@@ -95,7 +96,7 @@ func (r *FileMySQLRepository) ComputeAndAppendDelta(sampleID string) (monitoring
 	delta := monitoring.ComputeDelta(current, *previous)
 
 	r.deltas = append(r.deltas, delta)
-	if err := monitoring.AppendJSONLFile(r.deltasDir, delta); err != nil {
+	if err := jsonl.Append(r.deltasDir, delta); err != nil {
 		return monitoring.MySQLDelta{}, fmt.Errorf("append delta: %w", err)
 	}
 	return delta, nil
@@ -168,10 +169,10 @@ func (r *FileMySQLRepository) PruneBefore(cutoff time.Time) error {
 	}
 	r.deltas = prunedDeltas
 
-	if err := monitoring.RewriteJSONLFile(r.samplesDir, r.samples); err != nil {
+	if err := jsonl.Rewrite(r.samplesDir, r.samples); err != nil {
 		return fmt.Errorf("rewrite samples: %w", err)
 	}
-	if err := monitoring.RewriteJSONLFile(r.deltasDir, r.deltas); err != nil {
+	if err := jsonl.Rewrite(r.deltasDir, r.deltas); err != nil {
 		return fmt.Errorf("rewrite deltas: %w", err)
 	}
 	return nil

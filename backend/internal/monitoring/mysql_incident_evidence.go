@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"medics-health-check/backend/internal/util/jsonl"
 	"os"
 	"path/filepath"
 	"sync"
@@ -33,7 +34,7 @@ func NewFileSnapshotRepository(path string) (*FileSnapshotRepository, error) {
 
 	repo := &FileSnapshotRepository{path: path}
 	var err error
-	repo.data, err = LoadJSONLFile[IncidentSnapshot](path)
+	repo.data, err = jsonl.Load[IncidentSnapshot](path)
 	if err != nil {
 		return nil, fmt.Errorf("load snapshots: %w", err)
 	}
@@ -47,7 +48,7 @@ func (r *FileSnapshotRepository) SaveSnapshots(incidentID string, snaps []Incide
 	for _, snap := range snaps {
 		snap.IncidentID = incidentID
 		r.data = append(r.data, snap)
-		if err := AppendJSONLFile(r.path, snap); err != nil {
+		if err := jsonl.Append(r.path, snap); err != nil {
 			return fmt.Errorf("append snapshot: %w", err)
 		}
 	}
@@ -78,7 +79,7 @@ func (r *FileSnapshotRepository) PruneBefore(cutoff time.Time) error {
 		}
 	}
 	r.data = pruned
-	return RewriteJSONLFile(r.path, r.data)
+	return jsonl.Rewrite(r.path, r.data)
 }
 
 // MySQLEvidenceCollector captures evidence snapshots from MySQL on incident open.

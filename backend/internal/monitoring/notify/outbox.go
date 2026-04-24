@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"medics-health-check/backend/internal/monitoring"
+	"medics-health-check/backend/internal/util/jsonl"
 )
 
 // NotificationOutboxRepository defines generic notification queue operations.
@@ -35,7 +36,7 @@ func NewFileNotificationOutbox(path string) (*FileNotificationOutbox, error) {
 
 	outbox := &FileNotificationOutbox{path: path}
 	var err error
-	outbox.data, err = monitoring.LoadJSONLFile[monitoring.NotificationEvent](path)
+	outbox.data, err = jsonl.Load[monitoring.NotificationEvent](path)
 	if err != nil {
 		return nil, fmt.Errorf("load outbox: %w", err)
 	}
@@ -57,7 +58,7 @@ func (o *FileNotificationOutbox) Enqueue(evt monitoring.NotificationEvent) error
 	}
 
 	o.data = append(o.data, evt)
-	return monitoring.AppendJSONLFile(o.path, evt)
+	return jsonl.Append(o.path, evt)
 }
 
 func (o *FileNotificationOutbox) ListPending(limit int) ([]monitoring.NotificationEvent, error) {
@@ -101,7 +102,7 @@ func (o *FileNotificationOutbox) MarkSent(id string) error {
 		return fmt.Errorf("notification not found: %s", id)
 	}
 
-	return monitoring.RewriteJSONLFile(o.path, o.data)
+	return jsonl.Rewrite(o.path, o.data)
 }
 
 func (o *FileNotificationOutbox) MarkFailed(id string, reason string) error {
@@ -122,7 +123,7 @@ func (o *FileNotificationOutbox) MarkFailed(id string, reason string) error {
 		return fmt.Errorf("notification not found: %s", id)
 	}
 
-	return monitoring.RewriteJSONLFile(o.path, o.data)
+	return jsonl.Rewrite(o.path, o.data)
 }
 
 func (o *FileNotificationOutbox) PruneBefore(cutoff time.Time) error {
@@ -136,7 +137,7 @@ func (o *FileNotificationOutbox) PruneBefore(cutoff time.Time) error {
 		}
 	}
 	o.data = pruned
-	return monitoring.RewriteJSONLFile(o.path, o.data)
+	return jsonl.Rewrite(o.path, o.data)
 }
 
 // EnqueueIncidentNotification is a helper that creates a notification event from an incident.
