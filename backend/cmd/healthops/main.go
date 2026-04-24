@@ -3,13 +3,14 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
 	"time"
 
+	"medics-health-check/backend/internal/logging"
 	"medics-health-check/backend/internal/monitoring"
 	"medics-health-check/backend/internal/monitoring/ai"
 	airepositories "medics-health-check/backend/internal/monitoring/ai/repositories"
@@ -24,11 +25,15 @@ import (
 )
 
 func main() {
-	logger := log.New(os.Stdout, "healthops ", log.LstdFlags|log.Lmicroseconds)
+	slogLogger := logging.Init("")
+	// Legacy *log.Logger shim so existing constructors and helpers (which
+	// still take *log.Logger) emit through the structured sink at INFO level.
+	// Per-package conversion of mysql/ai/notify/repositories is deferred.
+	logger := logging.LegacyAdapter(slogLogger)
 
 	// Load .env file if it exists
 	if err := godotenv.Load(); err != nil {
-		logger.Printf("Warning: .env file not found or error loading: %v", err)
+		slogLogger.Warn("env file not loaded", "error", logging.RedactErr(err))
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -41,7 +46,8 @@ func main() {
 
 	cfg, err := monitoring.LoadConfig(configPath)
 	if err != nil {
-		logger.Fatalf("load config: %v", err)
+		slogLogger.Error("load config", "error", logging.RedactErr(err), "path", configPath)
+		os.Exit(1)
 	}
 
 	var store monitoring.Store
@@ -52,25 +58,27 @@ func main() {
 		// Use HybridStore with MongoDB as primary, local file as fallback
 		hs, err := monitoring.NewHybridStore(statePath, cfg.Checks, mongoURI, mongoDB, mongoPrefix, cfg.RetentionDays, logger)
 		if err != nil {
-			logger.Fatalf("init hybrid store: %v", err)
+			slogLogger.Error("init hybrid store", "error", logging.RedactErr(err))
+			os.Exit(1)
 		}
 		hybridStore = hs
 		store = hs
-		logger.Printf("running with MongoDB as primary storage (local file fallback)")
+		slogLogger.Info("storage backend selected", "mode", "mongodb_primary", "fallback", "local_file")
 	} else {
 		// Use only local file store
 		store, err = monitoring.NewFileStore(statePath, cfg.Checks)
 		if err != nil {
-			logger.Fatalf("init file store: %v", err)
+			slogLogger.Error("init file store", "error", logging.RedactErr(err))
+			os.Exit(1)
 		}
-		logger.Printf("running with local file persistence")
+		slogLogger.Info("storage backend selected", "mode", "local_file")
 	}
 
 	service := monitoring.NewService(cfg, store, logger)
 
 	// Warn about insecure auth configuration
 	if !cfg.Auth.Enabled {
-		logger.Printf("SECURITY WARNING: Authentication is disabled — set auth.enabled=true in config for production use")
+		slogLogger.Warn("authentication disabled", "remediation", "set auth.enabled=true in config for production use")
 	}
 
 	// Initialize MongoDB client for repositories (separate from HybridStore's MongoMirror)
@@ -85,19 +93,17 @@ func main() {
 		var err error
 		mongoClient, err = mongo.Connect(clientOpts)
 		if err != nil {
-			logger.Printf("Warning: Failed to connect to MongoDB for repositories: %v", err)
-			logger.Printf("Repositories will use file-based fallback")
+			slogLogger.Warn("mongodb connect for repositories failed", "error", logging.RedactErr(err), "fallback", "file_based")
 			mongoClient = nil
 		} else {
 			// Ping to verify connection
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			if err := mongoClient.Ping(ctx, nil); err != nil {
-				logger.Printf("Warning: MongoDB ping for repositories failed: %v", err)
-				logger.Printf("Repositories will use file-based fallback")
+				slogLogger.Warn("mongodb ping for repositories failed", "error", logging.RedactErr(err), "fallback", "file_based")
 				_ = mongoClient.Disconnect(context.Background())
 				mongoClient = nil
 			} else {
-				logger.Printf("MongoDB connection for repositories established")
+				slogLogger.Info("mongodb connection for repositories established")
 				cancel()
 			}
 		}
@@ -116,19 +122,18 @@ func main() {
 	if mongoClient != nil {
 		mongoUserRepo, err := repositories.NewMongoUserRepository(mongoClient, mongoDB, mongoPrefix)
 		if err != nil {
-			logger.Printf("Warning: Failed to init MongoDB user repository: %v", err)
-			logger.Printf("Falling back to file-based user store")
+			slogLogger.Warn("init mongodb user repository failed", "error", logging.RedactErr(err), "fallback", "file_based_user_store")
 			userStore, err := monitoring.NewUserStore(dataDir)
 			if err != nil {
-				logger.Printf("Warning: Failed to init file-based user store: %v", err)
+				slogLogger.Warn("init file-based user store failed", "error", logging.RedactErr(err))
 			} else {
 				service.SetUserStore(userStore)
 				activeUserStore = userStore
 				userStoreBackendKind = "file"
 				if userStore.IsUsingDefaultCredentials() {
-					logger.Printf("WARNING: User management using default credentials — change immediately in production")
+					slogLogger.Warn("user management using default credentials", "remediation", "change immediately in production")
 				} else {
-					logger.Printf("User management initialized (file-based)")
+					slogLogger.Info("user management initialized", "backend", "file")
 				}
 			}
 		} else {
@@ -140,9 +145,9 @@ func main() {
 				changed, err := mongoUserRepo.BootstrapAdmin(bootstrapCtx, bootstrapPassword, bootstrapEmail, bootstrapReset)
 				cancel()
 				if err != nil {
-					logger.Printf("Warning: Failed to bootstrap MongoDB admin user: %v", err)
+					slogLogger.Warn("bootstrap mongodb admin user failed", "error", logging.RedactErr(err))
 				} else if changed {
-					logger.Printf("MongoDB admin bootstrap applied")
+					slogLogger.Info("mongodb admin bootstrap applied")
 				}
 			}
 
@@ -150,20 +155,20 @@ func main() {
 			service.SetUserStore(adapter)
 			activeUserStore = adapter
 			userStoreBackendKind = "mongo"
-			logger.Printf("User management initialized (MongoDB)")
+			slogLogger.Info("user management initialized", "backend", "mongodb")
 		}
 	} else {
 		userStore, err := monitoring.NewUserStore(dataDir)
 		if err != nil {
-			logger.Printf("Warning: Failed to init user store: %v", err)
+			slogLogger.Warn("init user store failed", "error", logging.RedactErr(err))
 		} else {
 			service.SetUserStore(userStore)
 			activeUserStore = userStore
 			userStoreBackendKind = "file"
 			if userStore.IsUsingDefaultCredentials() {
-				logger.Printf("WARNING: User management using default credentials — change immediately in production")
+				slogLogger.Warn("user management using default credentials", "remediation", "change immediately in production")
 			} else {
-				logger.Printf("User management initialized")
+				slogLogger.Info("user management initialized", "backend", "file")
 			}
 		}
 	}
@@ -174,16 +179,23 @@ func main() {
 	if envOrDefault("HEALTHOPS_REQUIRE_PROD_AUTH", "false") == "true" {
 		// Block on command-check RCE risk regardless of user-store backend.
 		if cfg.AllowCommandChecks {
-			logger.Fatalf("HEALTHOPS_REQUIRE_PROD_AUTH=true: refusing to start with allowCommandChecks=true (shell command checks are an RCE risk). Set allowCommandChecks=false in your config or via the API.")
+			slogLogger.Error("prod auth gate: refusing to start with allowCommandChecks=true",
+				"reason", "shell command checks are an RCE risk",
+				"remediation", "set allowCommandChecks=false in config or via API")
+			os.Exit(1)
 		}
 
 		switch userStoreBackendKind {
 		case "file":
 			if activeUserStore == nil {
-				logger.Fatalf("HEALTHOPS_REQUIRE_PROD_AUTH=true: user store failed to initialize; refusing to start without authentication.")
+				slogLogger.Error("prod auth gate: user store failed to initialize",
+					"reason", "refusing to start without authentication")
+				os.Exit(1)
 			}
 			if activeUserStore.IsUsingDefaultCredentials() {
-				logger.Fatalf("HEALTHOPS_REQUIRE_PROD_AUTH=true: refusing to start with default admin credentials. Set HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD before first start, or change the admin password via the API and restart.")
+				slogLogger.Error("prod auth gate: refusing to start with default admin credentials",
+					"remediation", "set HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD before first start, or change admin password via API and restart")
+				os.Exit(1)
 			}
 		case "mongo":
 			// The Mongo adapter cannot cheaply prove a non-default password
@@ -191,13 +203,17 @@ func main() {
 			// Pragmatic policy: require that the operator either bootstrapped
 			// via env or accepts responsibility for credential management.
 			if !mongoBootstrapProvided {
-				logger.Printf("WARNING: HEALTHOPS_REQUIRE_PROD_AUTH=true with MongoDB user store, but HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD was not set — cannot verify admin credentials are non-default. Set HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD or confirm out-of-band that the admin password has been rotated.")
+				slogLogger.Warn("prod auth gate: cannot verify admin credentials are non-default",
+					"backend", "mongodb",
+					"remediation", "set HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD or confirm out-of-band that the admin password has been rotated")
 			}
 		default:
-			logger.Fatalf("HEALTHOPS_REQUIRE_PROD_AUTH=true: no user store backend was initialized; refusing to start without authentication.")
+			slogLogger.Error("prod auth gate: no user store backend was initialized",
+				"reason", "refusing to start without authentication")
+			os.Exit(1)
 		}
 
-		logger.Printf("HEALTHOPS_REQUIRE_PROD_AUTH=true: production hardening checks passed")
+		slogLogger.Info("prod auth gate: production hardening checks passed")
 	}
 
 	// Initialize incident manager
@@ -208,14 +224,14 @@ func main() {
 	// Start MongoDB health monitor — creates incidents when MongoDB goes down
 	if hybridStore != nil && mongoURI != "" {
 		stopMongoMonitor := make(chan struct{})
-		go monitorMongoDB(hybridStore, incidentManager, logger, stopMongoMonitor)
+		go monitorMongoDB(hybridStore, incidentManager, slogLogger, stopMongoMonitor)
 		defer close(stopMongoMonitor)
 	}
 
 	// Initialize generic repositories (notification outbox, AI queue, snapshots)
 	outbox, err := notify.NewFileNotificationOutbox(filepath.Join(dataDir, "notification_outbox.jsonl"))
 	if err != nil {
-		logger.Printf("Warning: Failed to init notification outbox: %v", err)
+		slogLogger.Warn("init notification outbox failed", "error", logging.RedactErr(err))
 	}
 
 	// Initialize notification channel store and dispatcher
@@ -223,20 +239,19 @@ func main() {
 	if hybridStore != nil && hybridStore.HasMongo() && !hybridStore.IsMongoDown() && mongoURI != "" {
 		mongoChannelRepo, err := repositories.NewMongoChannelRepository(mongoURI, mongoDB, mongoPrefix, 5)
 		if err != nil {
-			logger.Printf("Warning: Failed to init MongoDB channel repository: %v", err)
-			logger.Printf("Falling back to file-based channel store")
+			slogLogger.Warn("init mongodb channel repository failed", "error", logging.RedactErr(err), "fallback", "file_based_channel_store")
 			channelStore, err = notify.NewNotificationChannelStore(dataDir)
 			if err != nil {
-				logger.Printf("Warning: Failed to init file-based channel store: %v", err)
+				slogLogger.Warn("init file-based channel store failed", "error", logging.RedactErr(err))
 			}
 		} else {
 			channelStore = repositories.NewChannelStoreAdapter(mongoChannelRepo)
-			logger.Printf("MongoDB notification channel repository initialized")
+			slogLogger.Info("notification channel repository initialized", "backend", "mongodb")
 		}
 	} else {
 		channelStore, err = notify.NewNotificationChannelStore(dataDir)
 		if err != nil {
-			logger.Printf("Warning: Failed to init notification channel store: %v", err)
+			slogLogger.Warn("init notification channel store failed", "error", logging.RedactErr(err))
 		}
 	}
 
@@ -252,17 +267,17 @@ func main() {
 		notificationDispatcher.SetDashboardURL(addr)
 		notificationAPIHandler := notify.NewNotificationAPIHandler(channelStore, notificationDispatcher, cfg)
 		service.SetNotifyRoutes(notificationAPIHandler)
-		logger.Printf("Notification channels initialized")
+		slogLogger.Info("notification channels initialized")
 	}
 
 	aiQueue, err := ai.NewFileAIQueue(dataDir)
 	if err != nil {
-		logger.Printf("Warning: Failed to init AI queue: %v", err)
+		slogLogger.Warn("init ai queue failed", "error", logging.RedactErr(err))
 	}
 
 	snapshotRepo, err := monitoring.NewFileSnapshotRepository(filepath.Join(dataDir, "incident_snapshots.jsonl"))
 	if err != nil {
-		logger.Printf("Warning: Failed to init snapshot repository: %v", err)
+		slogLogger.Warn("init snapshot repository failed", "error", logging.RedactErr(err))
 	}
 
 	// Initialize server metrics repository (for SSH process/metrics history)
@@ -282,7 +297,8 @@ func main() {
 	if hasMySQLChecks {
 		repo, err := mysql.NewFileMySQLRepository(dataDir)
 		if err != nil {
-			logger.Fatalf("init mysql repository: %v", err)
+			slogLogger.Error("init mysql repository", "error", logging.RedactErr(err))
+			os.Exit(1)
 		}
 		mysqlRepo = repo
 
@@ -295,15 +311,15 @@ func main() {
 		if hybridStore != nil && hybridStore.HasMongo() && !hybridStore.IsMongoDown() && mongoURI != "" {
 			alertRuleRepo, err := repositories.NewMongoAlertRuleRepository(mongoURI, mongoDB, mongoPrefix)
 			if err != nil {
-				logger.Printf("Warning: Failed to init MongoDB alert rule repository: %v", err)
-				logger.Printf("Using default MySQL rules with file-based state")
+				slogLogger.Warn("init mongodb alert rule repository failed", "error", logging.RedactErr(err), "fallback", "default_rules_file_state")
 				mysqlRules := monitoring.DefaultMySQLRules()
 				ruleEngine, err = monitoring.NewMySQLRuleEngine(mysqlRules, dataDir)
 				if err != nil {
-					logger.Fatalf("init mysql rule engine: %v", err)
+					slogLogger.Error("init mysql rule engine", "error", logging.RedactErr(err))
+					os.Exit(1)
 				}
 			} else {
-				logger.Printf("MongoDB alert rule repository initialized")
+				slogLogger.Info("mongodb alert rule repository initialized")
 				// Seed default MySQL rules if empty
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
@@ -312,30 +328,31 @@ func main() {
 				// Check if we need to seed
 				rules, err := alertRuleRepo.List(ctx)
 				if err != nil || len(rules) == 0 {
-					logger.Printf("Seeding default MySQL alert rules to MongoDB")
+					slogLogger.Info("seeding default mysql alert rules to mongodb")
 					for i := range mysqlRules {
 						if err := alertRuleRepo.Create(ctx, &mysqlRules[i]); err != nil {
-							logger.Printf("Warning: Failed to seed rule %s: %v", mysqlRules[i].ID, err)
+							slogLogger.Warn("seed mysql alert rule failed", "rule_id", mysqlRules[i].ID, "error", logging.RedactErr(err))
 						}
 					}
 				}
 				// Load rules from MongoDB for the engine
 				loadedRules, err := alertRuleRepo.List(ctx)
 				if err != nil {
-					logger.Printf("Warning: Failed to load rules from MongoDB: %v", err)
-					logger.Printf("Using default MySQL rules")
+					slogLogger.Warn("load mysql rules from mongodb failed", "error", logging.RedactErr(err), "fallback", "default_rules")
 					loadedRules = mysqlRules
 				}
 				ruleEngine, err = monitoring.NewMySQLRuleEngine(loadedRules, dataDir)
 				if err != nil {
-					logger.Fatalf("init mysql rule engine: %v", err)
+					slogLogger.Error("init mysql rule engine", "error", logging.RedactErr(err))
+					os.Exit(1)
 				}
 			}
 		} else {
 			mysqlRules := monitoring.DefaultMySQLRules()
 			ruleEngine, err = monitoring.NewMySQLRuleEngine(mysqlRules, dataDir)
 			if err != nil {
-				logger.Fatalf("init mysql rule engine: %v", err)
+				slogLogger.Error("init mysql rule engine", "error", logging.RedactErr(err))
+				os.Exit(1)
 			}
 		}
 
@@ -355,7 +372,7 @@ func main() {
 		service.SetMySQLRoutes(mysqlAPIHandler)
 		service.SetSnapshotRepo(snapshotRepo)
 
-		logger.Printf("MySQL monitoring enabled")
+		slogLogger.Info("mysql monitoring enabled")
 	}
 
 	// Initialize retention job
@@ -386,20 +403,19 @@ func main() {
 			RetentionDays:  cfg.RetentionDays,
 		})
 		if err != nil {
-			logger.Printf("Warning: Failed to init MongoDB AI config repository: %v", err)
-			logger.Printf("Falling back to file-based AI config store")
+			slogLogger.Warn("init mongodb ai config repository failed", "error", logging.RedactErr(err), "fallback", "file_based_ai_config")
 			aiConfigStore, err = ai.NewAIConfigStore(dataDir)
 			if err != nil {
-				logger.Printf("Warning: Failed to init file-based AI config store: %v", err)
+				slogLogger.Warn("init file-based ai config store failed", "error", logging.RedactErr(err))
 			}
 		} else {
-			logger.Printf("MongoDB AI config repository initialized")
+			slogLogger.Info("mongodb ai config repository initialized")
 			aiConfigStore = airepositories.NewMongoAIConfigStoreAdapter(mongoAIConfigRepo)
 		}
 	} else {
 		aiConfigStore, err = ai.NewAIConfigStore(dataDir)
 		if err != nil {
-			logger.Printf("Warning: Failed to init AI config store: %v", err)
+			slogLogger.Warn("init ai config store failed", "error", logging.RedactErr(err))
 		}
 	}
 	if aiConfigStore != nil && aiQueue != nil {
@@ -416,7 +432,7 @@ func main() {
 		// Wire auto-analysis + notifications: trigger when incidents are created
 		incidentManager.SetOnIncidentCreated(func(incident monitoring.Incident) {
 			if err := aiService.EnqueueIncidentAnalysis(incident.ID); err != nil {
-				logger.Printf("AI: failed to enqueue analysis for incident %s: %v", incident.ID, err)
+				slogLogger.Warn("ai enqueue analysis failed", "incident_id", incident.ID, "error", logging.RedactErr(err))
 			}
 			if notificationDispatcher != nil {
 				channelIDs := lookupCheckChannelIDs(store, incident.CheckID)
@@ -424,7 +440,7 @@ func main() {
 			}
 		})
 
-		logger.Printf("BYOK AI service initialized (background worker active)")
+		slogLogger.Info("byok ai service initialized", "worker", "active")
 	}
 
 	// If AI not configured, still wire notification dispatch for incidents
@@ -450,7 +466,8 @@ func main() {
 	defer close(stopRetention)
 
 	if err := service.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		logger.Fatalf("service stopped: %v", err)
+		slogLogger.Error("service stopped", "error", logging.RedactErr(err))
+		os.Exit(1)
 	}
 }
 
@@ -485,7 +502,7 @@ func envOrDefault(key, fallback string) string {
 }
 
 // monitorMongoDB periodically pings MongoDB and creates/resolves incidents.
-func monitorMongoDB(store *monitoring.HybridStore, im *monitoring.IncidentManager, logger *log.Logger, stop <-chan struct{}) {
+func monitorMongoDB(store *monitoring.HybridStore, im *monitoring.IncidentManager, logger *slog.Logger, stop <-chan struct{}) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -499,7 +516,7 @@ func monitorMongoDB(store *monitoring.HybridStore, im *monitoring.IncidentManage
 			"MongoDB is unreachable — operating in local file fallback mode",
 			map[string]string{"component": "mongodb"},
 		)
-		logger.Printf("INCIDENT: MongoDB unreachable at startup — running on local file fallback")
+		logger.Error("incident: mongodb unreachable at startup", "check_id", checkID, "fallback", "local_file")
 	}
 
 	for {
@@ -518,11 +535,11 @@ func monitorMongoDB(store *monitoring.HybridStore, im *monitoring.IncidentManage
 					"MongoDB is unreachable — operating in local file fallback mode: "+err.Error(),
 					map[string]string{"component": "mongodb"},
 				)
-				logger.Printf("INCIDENT: MongoDB connectivity lost: %v", err)
+				logger.Error("incident: mongodb connectivity lost", "check_id", checkID, "error", logging.RedactErr(err))
 			} else if !isDown && wasDown {
 				// MongoDB recovered — auto-resolve
 				_ = im.AutoResolveOnRecovery(checkID)
-				logger.Printf("RESOLVED: MongoDB connectivity restored")
+				logger.Info("resolved: mongodb connectivity restored", "check_id", checkID)
 			}
 			wasDown = isDown
 		}

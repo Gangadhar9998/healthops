@@ -2,12 +2,16 @@ package monitoring
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"medics-health-check/backend/internal/httpx"
+	"medics-health-check/backend/internal/logging"
 	"net/http"
 	"os"
 	"strings"
@@ -811,9 +815,20 @@ func maxBodyMiddleware(maxBytes int64, next http.Handler) http.Handler {
 	})
 }
 
-func loggingMiddleware(logger *log.Logger, next http.Handler) http.Handler {
+func loggingMiddleware(_ *log.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+
+		// Reuse an inbound X-Request-Id when present (so traces span hops),
+		// otherwise generate a fresh 16-byte hex id.
+		reqID := r.Header.Get("X-Request-Id")
+		if reqID == "" {
+			reqID = newRequestID()
+		}
+		w.Header().Set("X-Request-Id", reqID)
+
+		ctx := logging.WithRequestID(r.Context(), reqID)
+		r = r.WithContext(ctx)
 
 		// Wrap response writer to capture status code
 		wrapped := &responseWriter{ResponseWriter: w, status: http.StatusOK}
@@ -821,11 +836,51 @@ func loggingMiddleware(logger *log.Logger, next http.Handler) http.Handler {
 		next.ServeHTTP(wrapped, r)
 
 		duration := time.Since(start)
-		logger.Printf("%s %s %s", r.Method, r.URL.Path, duration.Round(time.Millisecond))
+
+		// Choose level by outcome.
+		l := logging.FromContext(ctx)
+		level := slog.LevelInfo
+		switch {
+		case wrapped.status >= 500:
+			level = slog.LevelError
+		case wrapped.status >= 400:
+			level = slog.LevelWarn
+		}
+		l.Log(ctx, level, "http request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", wrapped.status,
+			"duration_ms", duration.Milliseconds(),
+			"remote_ip", clientIP(r),
+			"user_agent", r.UserAgent(),
+		)
 
 		// Note: Metrics recording is now done by metricsMiddleware
 		// This middleware only handles logging
 	})
+}
+
+func newRequestID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// rand.Read should not fail; fall back to a timestamp-based id so we
+		// never panic in the request hot path.
+		return fmt.Sprintf("ts-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// clientIP returns the best-effort remote IP, honouring X-Forwarded-For when
+// the request came through a trusted proxy. Authorization headers are never
+// inspected or logged from this helper.
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if comma := strings.IndexByte(xff, ','); comma >= 0 {
+			return strings.TrimSpace(xff[:comma])
+		}
+		return strings.TrimSpace(xff)
+	}
+	return r.RemoteAddr
 }
 
 // responseWriter wraps http.ResponseWriter to capture status code
