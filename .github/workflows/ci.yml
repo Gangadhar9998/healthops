@@ -83,6 +83,19 @@ jobs:
           done
         shell: bash
 
+      - name: Shell script syntax
+        run: bash -n scripts/*.sh
+
+      - name: Docker compose config
+        env:
+          MONGODB_URI: mongodb://mongo:27017
+          MONGODB_DATABASE: healthops
+          MONGODB_COLLECTION_PREFIX: healthops
+          HEALTHOPS_JWT_SECRET: ci-jwt-secret-at-least-32-characters
+          HEALTHOPS_AI_ENCRYPTION_KEY: ci-ai-encryption-key-at-least-32-characters
+          HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD: ci-admin-password-at-least-32-characters
+        run: docker compose config --quiet
+
       - name: Verify gofmt
         working-directory: backend
         run: |

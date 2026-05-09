@@ -7,7 +7,7 @@
 ### Prerequisites
 
 - **Go 1.19+** installed
-- **MongoDB** (optional) - only if using hybrid storage
+- **MongoDB 7+** reachable from HealthOps. MongoDB is required authoritative storage.
 - **Basic tools:** `curl`, `ps`, `netstat`
 
 ### Environment Variables
@@ -15,12 +15,14 @@
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `CONFIG_PATH` | No | `backend/config/default.json` | Path to configuration file |
-| `STATE_PATH` | No | `backend/data/state.json` | Path to state storage file |
-| `MONGODB_URI` | No | - | MongoDB connection string (enable hybrid storage) |
-| `MONGODB_DATABASE` | No | `healthops` | MongoDB database name |
-| `MONGODB_COLLECTION_PREFIX` | No | `healthops` | MongoDB collection prefix |
-| `AUTH_USERNAME` | No | - | Basic auth username (if auth enabled) |
-| `AUTH_PASSWORD` | No | - | Basic auth password (if auth enabled) |
+| `MONGODB_URI` | Yes | - | MongoDB connection string for authoritative storage |
+| `MONGODB_DATABASE` | Yes | `healthops` | MongoDB database name |
+| `MONGODB_COLLECTION_PREFIX` | Yes | `healthops` | MongoDB collection prefix |
+| `HEALTHOPS_JWT_SECRET` | Yes | - | JWT signing secret; use at least 32 random characters |
+| `HEALTHOPS_AI_ENCRYPTION_KEY` | Yes | - | Deployment-managed secret for encrypting AI provider keys |
+| `HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD` | Yes on first start | - | Bootstraps or rotates the admin password |
+
+`STATE_PATH`, `DATA_DIR`, `state.json`, and JSONL repository files are obsolete file-store operational controls. Do not use them for deploy, backup, restore, or incident response.
 
 ### Start the Service
 
@@ -29,10 +31,22 @@
 cd backend
 
 # Start the monitoring service
+MONGODB_URI=mongodb://localhost:27017 \
+MONGODB_DATABASE=healthops \
+MONGODB_COLLECTION_PREFIX=healthops \
+HEALTHOPS_JWT_SECRET='change-me-at-least-32-characters' \
+HEALTHOPS_AI_ENCRYPTION_KEY='change-me-random-ai-secret' \
+HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD='change-me-admin-password' \
 go run ./cmd/healthops
 
 # Alternative: Build and run
 go build -o healthops ./cmd/healthops
+MONGODB_URI=mongodb://localhost:27017 \
+MONGODB_DATABASE=healthops \
+MONGODB_COLLECTION_PREFIX=healthops \
+HEALTHOPS_JWT_SECRET='change-me-at-least-32-characters' \
+HEALTHOPS_AI_ENCRYPTION_KEY='change-me-random-ai-secret' \
+HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD='change-me-admin-password' \
 ./healthops
 ```
 
@@ -189,10 +203,12 @@ Each check can have individual scheduling parameters:
 
 ```bash
 # Check service logs
-tail -f backend/data/state.json
+sudo journalctl -u healthops -f
+# or: docker compose logs -f healthops
 
-# Check audit log (if enabled)
-cat data/audit.json
+# Check audit events through the API or MongoDB audit export
+curl -s http://localhost:8080/api/v1/audit \
+  -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
 
 # Run verbose mode (if available)
 go run ./cmd/healthops -v
@@ -301,7 +317,8 @@ grep -A 10 "alertRules" config/default.json
 
 ```bash
 # Check audit log for alert attempts
-grep "alert" data/audit.json
+curl -s http://localhost:8080/api/v1/audit \
+  -H "Authorization: Bearer $TOKEN" | jq '.data[] | select(.action | test("alert"))'
 
 # Manual alert test
 curl -X POST http://localhost:8080/api/v1/runs \
@@ -391,30 +408,24 @@ The service automatically resolves incidents when the underlying check recovers:
 
 ## 6. Backup and Restore
 
-### State File Location
+### Authoritative Storage Location
 
-- **State file:** `backend/data/state.json`
-- **Audit log:** `backend/data/audit.json`
+- **MongoDB URI:** `MONGODB_URI`
+- **MongoDB database:** `MONGODB_DATABASE`
+- **Collection prefix:** `MONGODB_COLLECTION_PREFIX`
 - **Config file:** `backend/config/default.json`
+- **Deployment secrets:** `HEALTHOPS_JWT_SECRET`, `HEALTHOPS_AI_ENCRYPTION_KEY`, `HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD`
 
 ### Backup Procedure
 
 ```bash
-# Create backup directory
-mkdir -p /backup/health-monitor/$(date +%Y%m%d)
-
-# Copy configuration files
-cp backend/config/default.json /backup/health-monitor/$(date +%Y%m%d)/config.json
-
-# Copy state files
-cp -r backend/data/ /backup/health-monitor/$(date +%Y%m%d)/
-
-# Backup MongoDB (if using hybrid storage)
-mongodump --uri="$MONGODB_URI" --db=healthops --out /backup/health-monitor/$(date +%Y%m%d)/mongodb
-
-# Verify backup
-ls -la /backup/health-monitor/$(date +%Y%m%d)/
+ENV_FILE=/etc/healthops/healthops.env \
+BACKUP_DIR=/var/backups/healthops \
+scripts/healthops-mongo-backup.sh
 ```
+
+Back up `/etc/healthops/healthops.env` or the equivalent secret-manager values
+separately in encrypted storage.
 
 ### Restore Procedure
 
@@ -422,14 +433,18 @@ ls -la /backup/health-monitor/$(date +%Y%m%d)/
 # Stop the service
 pkill healthops
 
-# Restore config
-cp /backup/health-monitor/YYYYMMDD/config.json backend/config/default.json
+# Restore deployment environment secrets
+sudo install -m 0640 -o root -g healthops /path/to/healthops.env /etc/healthops/healthops.env
+set -a
+. /etc/healthops/healthops.env
+set +a
 
-# Restore state
-cp -r /backup/health-monitor/YYYYMMDD/data/ backend/
+# Restore authoritative MongoDB state
+CONFIRM_RESTORE="$MONGODB_DATABASE" \
+  scripts/healthops-mongo-restore.sh /var/backups/healthops/healthops-mongo-healthops-20260509T120000Z.archive.gz
 
-# Restore MongoDB (if using hybrid storage)
-mongorestore --uri="$MONGODB_URI" /backup/health-monitor/YYYYMMDD/mongodb/healthops
+# Restore config seed if needed
+cp /path/to/config.json backend/config/default.json
 
 # Start the service
 cd backend && go run ./cmd/healthops
@@ -438,23 +453,8 @@ cd backend && go run ./cmd/healthops
 ### Automated Backup Script
 
 ```bash
-#!/bin/bash
-# backup.sh
-
-BACKUP_DIR="/backup/health-monitor"
-DATE=$(date +%Y%m%d)
-
-mkdir -p "$BACKUP_DIR/$DATE"
-
-# Backup files
-cp -r config/ "$BACKUP_DIR/$DATE/"
-cp -r data/ "$BACKUP_DIR/$DATE/"
-
-# Keep only last 7 days
-cd "$BACKUP_DIR"
-ls -t | tail -n +8 | xargs rm -rf
-
-echo "Backup completed: $BACKUP_DIR/$DATE"
+# /etc/cron.d/healthops-backup
+0  *  *   *   *   healthops cd /opt/healthops && ENV_FILE=/etc/healthops/healthops.env BACKUP_DIR=/var/backups/healthops scripts/healthops-mongo-backup.sh >> /var/log/healthops-backup.log 2>&1
 ```
 
 ## 7. Performance Tuning
@@ -501,7 +501,7 @@ echo "Backup completed: $BACKUP_DIR/$DATE"
 - **Production:** 7-30 days
 - **Compliance:** 90+ days
 
-### MongoDB Mirroring Considerations
+### MongoDB Storage Considerations
 
 ```json
 {
@@ -513,7 +513,7 @@ echo "Backup completed: $BACKUP_DIR/$DATE"
 
 **Performance tips:**
 - Use connection pooling
-- Index CheckID and timestamps
+- Index check IDs and timestamps
 - Consider sharding for large deployments
 - Set appropriate read preferences
 
@@ -795,19 +795,16 @@ pkill healthops
 # Check port availability
 lsof -i :8080
 
-# Check file permissions
-ls -la backend/data/
+# Check MongoDB connectivity
+mongosh "$MONGODB_URI" --eval 'db.adminCommand({ping: 1})'
 ```
 
-### Data Corruption
+### MongoDB Data Corruption
 
 ```bash
-# Restore from backup
-cp backup/last-good/data/state.json backend/data/
-
-# Reset state
-rm backend/data/state.json
-touch backend/data/state.json
+# Restore the last known-good MongoDB dump
+CONFIRM_RESTORE="$MONGODB_DATABASE" \
+  scripts/healthops-mongo-restore.sh backup/last-good/healthops-mongo-healthops-20260509T120000Z.archive.gz
 ```
 
 ### High CPU Usage
@@ -823,7 +820,7 @@ touch backend/data/state.json
 ```bash
 # Reduce retention period
 # Implement result pruning
-# Enable MongoDB mirroring to reduce memory usage
+# Review MongoDB indexes and query plans
 ```
 
 ## Support
@@ -852,6 +849,10 @@ Mirrors and extends [`backend/docs/security-audit.md`](../backend/docs/security-
 - [ ] `HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD` is set to a strong, unique
       password for the first start, then **removed from the environment file
       after the admin password has been rotated through the UI**.
+- [ ] `MONGODB_URI`, `MONGODB_DATABASE`, and `MONGODB_COLLECTION_PREFIX` are
+      set and point at the production MongoDB deployment.
+- [ ] `HEALTHOPS_JWT_SECRET` and `HEALTHOPS_AI_ENCRYPTION_KEY` are set from
+      the deployment secret manager and included in encrypted secret backups.
 - [ ] `allowCommandChecks` is `false` in `config/default.json` and not enabled
       via the API. Shell-command checks are an RCE surface.
 - [ ] The service is fronted by a TLS-terminating reverse proxy. The Go
@@ -860,27 +861,24 @@ Mirrors and extends [`backend/docs/security-audit.md`](../backend/docs/security-
       Reverse-proxy headers in place: HSTS, `X-Frame-Options: DENY`,
       `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin`.
       See [deployment.md §4.4](deployment.md).
-- [ ] `data/` directory is mode `0750` (or stricter), owned by the service
-      user, on persistent storage, and included in the daily backup job —
-      see [backups.md](backups.md).
-- [ ] `data/.ai_enc_key` is backed up either with the rest of `data/` (using
-      encryption at rest) or to a separate secrets store. Confirm a test
-      restore decrypts `ai_config.json` cleanly.
+- [ ] MongoDB backups and deployment-secret backups are scheduled and a test
+      restore has been rehearsed — see [backups.md](backups.md).
 - [ ] Login rate limit is in place (`/api/v1/auth/login` is wrapped by a
       per-IP 5 req/min limiter on top of the global 100 req/min limit).
       Verified with: `for i in 1 2 3 4 5 6; do curl -i .../api/v1/auth/login -d '{}' -H 'Content-Type: application/json'; done`
       — request 6 must return `429`.
-- [ ] JWT signing secret (`data/.jwt_secret`) and AI encryption key
-      (`data/.ai_enc_key`) rotation cadence is documented and scheduled.
+- [ ] JWT signing secret (`HEALTHOPS_JWT_SECRET`) and AI encryption key
+      (`HEALTHOPS_AI_ENCRYPTION_KEY`) rotation cadence is documented and scheduled.
       See [`backend/docs/ai-key-rotation.md`](../backend/docs/ai-key-rotation.md).
-- [ ] Audit log destination is verified. `data/audit.json` (or the Mongo
-      audit collection) is being written and shipped to long-term storage.
+- [ ] Audit log destination is verified. The Mongo audit collection or API
+      export is being shipped to long-term storage.
 - [ ] Prometheus scrape is configured against `/metrics` and the burn-rate
       alerts in [slo.md §3](slo.md) are loaded into your alerting platform.
 - [ ] Smoke tests in [deployment.md §7](deployment.md) pass against the
       public URL.
 - [ ] Rollback plan is rehearsed: previous binary/image is on disk, last
-      known-good `data/` snapshot is restorable per [backups.md §4](backups.md).
+      known-good MongoDB backup and secret snapshot are restorable per
+      [backups.md §4](backups.md).
 
 ---
 
@@ -905,13 +903,14 @@ journalctl -u healthops -n 200 --no-pager
    `HEALTHOPS_REQUIRE_PROD_AUTH=true: refusing to start ...`. Fix the named
    condition (rotate default password, set `allowCommandChecks=false`, set
    `HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD`) and restart.
-2. **Disk full on `data/` volume.** `df -h /var/lib/healthops`. Atomic
-   writes fail when the temp file cannot be created. Free space (oldest
-   `*.jsonl` files are safe to truncate after backup), then restart.
+2. **MongoDB unavailable or full.** Check MongoDB disk and health with
+   `mongosh "$MONGODB_URI" --eval 'db.adminCommand({ping: 1})'` and the
+   MongoDB host's disk metrics. Restore MongoDB service before restarting
+   HealthOps.
 3. **Port already bound.** `sudo lsof -i :8080`. Kill the stray process or
    change the bind in config.
-4. **Bad config seed.** Only relevant on first start (config is ignored once
-   `state.json` exists). `jq . /etc/healthops/config.json` to validate.
+4. **Bad config seed.** Only relevant before MongoDB contains initialized
+   state. `jq . /etc/healthops/config.json` to validate.
 
 **Verify recovery:**
 ```bash
@@ -921,54 +920,49 @@ curl -fsS http://127.0.0.1:8080/readyz
 
 ### B. MongoDB unreachable
 
-**Symptoms.** Logs contain `mongo mirror sync failed`, dashboard reads slower
-than usual, no impact on `/healthz`. `MongoMirror` is best-effort by design.
+**Symptoms.** Logs contain MongoDB connection, ping, or repository errors;
+the dashboard may fail to load or return stale/incomplete data. Treat this as
+a primary storage incident.
 
 **First steps:**
 ```bash
 # Is Mongo up?
 mongosh "$MONGODB_URI" --eval 'db.adminCommand({ping: 1})'
 
-# Are reads still landing on the file store?
+# Does the API still respond?
 curl -fsS http://127.0.0.1:8080/api/v1/summary -H "Authorization: Bearer $TOKEN"
 ```
 
 **Action:**
 - If Mongo is down for a known reason (planned restart, network
-  maintenance), do nothing. The local file store is authoritative; Mongo
-  will catch up on writes when it returns. The Mongo data is **not** a
-  backup; do not panic over the lag.
-- If Mongo is down unexpectedly, treat as a Mongo incident in its own right.
-  HealthOps continues to function.
-- If you need to disable the mirror entirely, unset `MONGODB_URI` from the
-  environment file and restart.
+  maintenance), keep HealthOps in maintenance mode until MongoDB is healthy.
+- If Mongo is down unexpectedly, restore MongoDB service or fail over to the
+  standby MongoDB deployment, then restart HealthOps if repository errors
+  persist.
+- Do not unset `MONGODB_URI`; MongoDB is required.
 
-**Do NOT** restore Mongo from a HealthOps backup; the local `data/` is the
-source of truth. Once Mongo is back, HealthOps re-mirrors going forward.
+Restore MongoDB from the latest HealthOps `mongodump` only when the primary
+database is lost or corrupted.
 
-### C. `state.json` corruption
+### C. MongoDB state corruption
 
-**Symptoms.** Service refuses to start with `failed to load state` in logs,
-or starts but returns inconsistent data (missing checks, wrong incident
-state). May follow a host crash mid-write.
+**Symptoms.** Service starts but returns inconsistent data (missing checks,
+wrong incident state, broken user records) or MongoDB reports collection/index
+corruption.
 
 **First steps:**
 ```bash
 sudo systemctl stop healthops
-# Inspect the current state
-sudo -u healthops jq . /var/lib/healthops/data/state.json | head -50
-# Look for a temp file from an interrupted atomic write
-ls -la /var/lib/healthops/data/state.json*
+# Inspect MongoDB metadata and recent documents
+mongosh "$MONGODB_URI" --eval 'db.adminCommand({ping: 1})'
+mongosh "$MONGODB_URI/$MONGODB_DATABASE" --eval 'db.getCollectionNames()'
 ```
 
 **Action:**
-1. If `state.json.tmp` exists and `state.json` is missing or zero-length,
-   the previous write was interrupted. Inspect the temp file with `jq`; if
-   it parses, rename it to `state.json` and start the service.
-2. Otherwise restore `data/` from the most recent snapshot per
-   [backups.md §4](backups.md). Move the corrupt directory aside; do not
-   delete it until the restore is verified.
-3. Start the service and run smoke tests from [deployment.md §7](deployment.md).
+1. Snapshot the current MongoDB database for forensic analysis.
+2. Restore MongoDB from the most recent known-good dump per
+   [backups.md §4](backups.md).
+3. Start the service and run smoke tests from [deployment-guide.md](deployment-guide.md).
 4. File a follow-up to investigate the host crash / OOM / disk fault that
    caused the corruption.
 
@@ -981,7 +975,8 @@ ls -la /var/lib/healthops/data/state.json*
 **Triage:**
 ```bash
 # Check audit + access logs for the source IP
-grep "auth.login" /var/lib/healthops/data/audit.json | tail -20
+curl -fsS http://127.0.0.1:8080/api/v1/audit -H "Authorization: Bearer $TOKEN" \
+  | jq '.data[] | select(.action == "auth.login")' | tail -20
 sudo tail -200 /var/log/nginx/access.log | grep '/auth/login'
 ```
 
@@ -1002,38 +997,38 @@ just to clear it for one user — the hostile traffic returns immediately.
 
 ### E. AI provider failures
 
-**Symptoms.** `ai_results.jsonl` shows growing `failure` entries; the
-provider health endpoint reports degraded; users report missing AI summaries
-on incidents.
+**Symptoms.** AI result records show growing `failure` entries; the provider
+health endpoint reports degraded; users report missing AI summaries on
+incidents.
 
 **First steps:**
 ```bash
 # Check provider health
 curl -fsS http://127.0.0.1:8080/api/v1/ai/health -H "Authorization: Bearer $TOKEN"
 
-# Inspect recent results
-tail -20 /var/lib/healthops/data/ai_results.jsonl | jq '{provider, status, error}'
+# Inspect recent results through the API or MongoDB analytics collection
+curl -fsS http://127.0.0.1:8080/api/v1/ai/results -H "Authorization: Bearer $TOKEN" \
+  | jq '.data[] | {provider, status, error}'
 
 # Inspect the queue depth
-wc -l /var/lib/healthops/data/ai_queue.jsonl
+curl -fsS http://127.0.0.1:8080/api/v1/ai/queue -H "Authorization: Bearer $TOKEN" | jq
 ```
 
 **Common causes and fixes:**
 1. **Expired or revoked API key.** Provider returns 401/403. Update the key
-   via the AI config UI; the key is re-encrypted with `.ai_enc_key` on save.
-   Do not edit `ai_config.json` by hand — it is encrypted.
+   via the AI config UI; the key is re-encrypted with
+   `HEALTHOPS_AI_ENCRYPTION_KEY` on save. Do not edit MongoDB documents by
+   hand — stored provider keys are encrypted.
 2. **Rate-limit / quota exhausted.** Provider returns 429. The service
    retries with backoff and falls back to the next configured provider.
    If no fallback is set, configure one. Otherwise wait out the quota window
    or upgrade the plan.
 3. **Network egress blocked.** Curl the provider endpoint from the host;
    if it fails, fix the egress firewall.
-4. **Queue backed up.** A long backlog (`ai_queue.jsonl` > a few thousand
-   lines) usually follows a provider outage. The background worker drains
-   it once the provider returns. If the backlog is no longer relevant
-   (e.g., from a resolved incident storm), you may stop the service,
-   truncate `ai_queue.jsonl`, and restart — items dropped this way are
-   lost permanently. AI results are not authoritative; this is acceptable.
+4. **Queue backed up.** A long backlog usually follows a provider outage.
+   The background worker drains it once the provider returns. If the backlog
+   is no longer relevant, clear it through the supported API/admin workflow
+   for your deployment; do not edit MongoDB queue documents by hand.
 
 AI is a non-critical augmentation. None of these incidents should page
 on-call unless they coincide with another incident. Route as tickets.

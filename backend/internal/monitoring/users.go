@@ -2,7 +2,6 @@ package monitoring
 
 import (
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -10,10 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
-
-	"golang.org/x/crypto/bcrypt"
 )
 
 // ---------------------------------------------------------------------------
@@ -29,17 +25,6 @@ type User struct {
 	ID           string    `json:"id"`
 	Username     string    `json:"username"`
 	PasswordHash string    `json:"-"`
-	Role         string    `json:"role"`
-	DisplayName  string    `json:"displayName,omitempty"`
-	Email        string    `json:"email,omitempty"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
-}
-
-type userJSON struct {
-	ID           string    `json:"id"`
-	Username     string    `json:"username"`
-	PasswordHash string    `json:"passwordHash"`
 	Role         string    `json:"role"`
 	DisplayName  string    `json:"displayName,omitempty"`
 	Email        string    `json:"email,omitempty"`
@@ -97,22 +82,26 @@ type JWTClaims struct {
 
 var jwtSecret []byte
 
-func initJWTSecret(dataDir string) {
-	keyPath := dataDir + "/.jwt_secret"
-	if data, err := os.ReadFile(keyPath); err == nil && len(data) >= 32 {
-		jwtSecret = data
-		return
+const jwtSecretEnv = "HEALTHOPS_JWT_SECRET"
+
+func InitJWTSecretFromEnv() error {
+	secret := strings.TrimSpace(os.Getenv(jwtSecretEnv))
+	if secret == "" {
+		return fmt.Errorf("%s is required", jwtSecretEnv)
 	}
-	jwtSecret = make([]byte, 32)
-	if _, err := rand.Read(jwtSecret); err != nil {
-		panic("failed to generate JWT secret: " + err.Error())
+	if len([]byte(secret)) < 32 {
+		return fmt.Errorf("%s must be at least 32 bytes", jwtSecretEnv)
 	}
-	_ = os.WriteFile(keyPath, jwtSecret, 0600)
+	jwtSecret = []byte(secret)
+	return nil
 }
 
-// InitJWTSecret prepares the JWT secret for non-file-backed user stores.
+// InitJWTSecret prepares the JWT secret. The dataDir argument is ignored and
+// kept only while older constructors are removed from the runtime path.
 func InitJWTSecret(dataDir string) {
-	initJWTSecret(dataDir)
+	if err := InitJWTSecretFromEnv(); err != nil {
+		panic(err)
+	}
 }
 
 func signJWT(claims JWTClaims) (string, error) {
@@ -181,243 +170,6 @@ func ExtractJWTClaims(r *http.Request) *JWTClaims {
 		}
 		return claims
 	}
-	return nil
-}
-
-// ---------------------------------------------------------------------------
-// User Store (file-backed)
-// ---------------------------------------------------------------------------
-
-type UserStore struct {
-	mu    sync.RWMutex
-	users map[string]*User // keyed by ID
-	path  string
-}
-
-func NewUserStore(dataDir string) (*UserStore, error) {
-	initJWTSecret(dataDir)
-
-	path := dataDir + "/users.json"
-	store := &UserStore{
-		users: make(map[string]*User),
-		path:  path,
-	}
-
-	if data, err := os.ReadFile(path); err == nil {
-		var records []userJSON
-		if err := json.Unmarshal(data, &records); err == nil {
-			for _, r := range records {
-				u := &User{
-					ID:           r.ID,
-					Username:     r.Username,
-					PasswordHash: r.PasswordHash,
-					Role:         r.Role,
-					DisplayName:  r.DisplayName,
-					Email:        r.Email,
-					CreatedAt:    r.CreatedAt,
-					UpdatedAt:    r.UpdatedAt,
-				}
-				store.users[u.ID] = u
-			}
-		}
-	}
-
-	// Seed default admin if no users exist
-	if len(store.users) == 0 {
-		hash, _ := bcrypt.GenerateFromPassword([]byte("admin"), bcrypt.DefaultCost)
-		now := time.Now().UTC()
-		store.users["admin"] = &User{
-			ID:           "admin",
-			Username:     "admin",
-			PasswordHash: string(hash),
-			Role:         RoleAdmin,
-			DisplayName:  "Administrator",
-			CreatedAt:    now,
-			UpdatedAt:    now,
-		}
-		store.save()
-	}
-
-	return store, nil
-}
-
-// save persists users to disk. Caller must hold s.mu (read or write).
-func (s *UserStore) save() {
-	records := make([]userJSON, 0, len(s.users))
-	for _, u := range s.users {
-		records = append(records, userJSON{
-			ID:           u.ID,
-			Username:     u.Username,
-			PasswordHash: u.PasswordHash,
-			Role:         u.Role,
-			DisplayName:  u.DisplayName,
-			Email:        u.Email,
-			CreatedAt:    u.CreatedAt,
-			UpdatedAt:    u.UpdatedAt,
-		})
-	}
-
-	data, _ := json.MarshalIndent(records, "", "  ")
-	_ = os.WriteFile(s.path, data, 0600)
-}
-
-func (s *UserStore) Authenticate(username, password string) (*User, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	for _, u := range s.users {
-		if u.Username == username {
-			if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)); err != nil {
-				return nil, fmt.Errorf("invalid credentials")
-			}
-			return u, nil
-		}
-	}
-	return nil, fmt.Errorf("invalid credentials")
-}
-
-// IsUsingDefaultCredentials checks if the only user is the default admin with default password.
-func (s *UserStore) IsUsingDefaultCredentials() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if len(s.users) != 1 {
-		return false
-	}
-	u, ok := s.users["admin"]
-	if !ok {
-		return false
-	}
-	return bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte("admin")) == nil
-}
-
-func (s *UserStore) List() []User {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	result := make([]User, 0, len(s.users))
-	for _, u := range s.users {
-		result = append(result, *u)
-	}
-	return result
-}
-
-func (s *UserStore) Get(id string) (*User, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	u, ok := s.users[id]
-	if !ok {
-		return nil, false
-	}
-	copy := *u
-	return &copy, true
-}
-
-func (s *UserStore) Create(req CreateUserRequest) (*User, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Check duplicate username
-	for _, u := range s.users {
-		if u.Username == req.Username {
-			return nil, fmt.Errorf("username already exists")
-		}
-	}
-
-	if req.Role != RoleAdmin && req.Role != RoleOps {
-		return nil, fmt.Errorf("role must be 'admin' or 'ops'")
-	}
-
-	if len(req.Password) < 8 {
-		return nil, fmt.Errorf("password must be at least 8 characters")
-	}
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	if err != nil {
-		return nil, fmt.Errorf("hash password: %w", err)
-	}
-
-	id := strings.ToLower(req.Username)
-	now := time.Now().UTC()
-	u := &User{
-		ID:           id,
-		Username:     req.Username,
-		PasswordHash: string(hash),
-		Role:         req.Role,
-		DisplayName:  req.DisplayName,
-		Email:        req.Email,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-
-	s.users[id] = u
-	s.save()
-	return u, nil
-}
-
-func (s *UserStore) Update(id string, req UpdateUserRequest) (*User, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	u, ok := s.users[id]
-	if !ok {
-		return nil, fmt.Errorf("user not found")
-	}
-
-	if req.Password != nil && len(*req.Password) >= 4 {
-		hash, err := bcrypt.GenerateFromPassword([]byte(*req.Password), bcrypt.DefaultCost)
-		if err != nil {
-			return nil, fmt.Errorf("hash password: %w", err)
-		}
-		u.PasswordHash = string(hash)
-	}
-
-	if req.Role != nil {
-		if *req.Role != RoleAdmin && *req.Role != RoleOps {
-			return nil, fmt.Errorf("role must be 'admin' or 'ops'")
-		}
-		u.Role = *req.Role
-	}
-
-	if req.DisplayName != nil {
-		if req.Email != nil {
-			u.Email = *req.Email
-		}
-
-		u.DisplayName = *req.DisplayName
-	}
-
-	if req.Email != nil {
-		u.Email = *req.Email
-	}
-
-	u.UpdatedAt = time.Now().UTC()
-	s.save()
-
-	copy := *u
-	return &copy, nil
-}
-
-func (s *UserStore) Delete(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if _, ok := s.users[id]; !ok {
-		return fmt.Errorf("user not found")
-	}
-
-	// Prevent deleting the last admin
-	adminCount := 0
-	for _, u := range s.users {
-		if u.Role == RoleAdmin {
-			adminCount++
-		}
-	}
-	if s.users[id].Role == RoleAdmin && adminCount <= 1 {
-		return fmt.Errorf("cannot delete the last admin user")
-	}
-
-	delete(s.users, id)
-	s.save()
 	return nil
 }
 

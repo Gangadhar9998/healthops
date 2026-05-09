@@ -5,17 +5,16 @@ services:
       - "8080:8080"
     environment:
       - CONFIG_PATH=/app/config/default.json
-      - STATE_PATH=/app/data/state.json
-      - DATA_DIR=/app/data
       - FRONTEND_DIR=/app/frontend/dist
-      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017}
-      - MONGODB_DATABASE=${MONGODB_DATABASE:-healthops}
-      - MONGODB_COLLECTION_PREFIX=${MONGODB_COLLECTION_PREFIX:-healthops}
-    volumes:
-      - healthops_data:/app/data
+      - MONGODB_URI=${MONGODB_URI:?set MONGODB_URI in .env, for example mongodb://mongo:27017}
+      - MONGODB_DATABASE=${MONGODB_DATABASE:?set MONGODB_DATABASE in .env}
+      - MONGODB_COLLECTION_PREFIX=${MONGODB_COLLECTION_PREFIX:?set MONGODB_COLLECTION_PREFIX in .env}
+      - HEALTHOPS_JWT_SECRET=${HEALTHOPS_JWT_SECRET:?set HEALTHOPS_JWT_SECRET in .env}
+      - HEALTHOPS_AI_ENCRYPTION_KEY=${HEALTHOPS_AI_ENCRYPTION_KEY:?set HEALTHOPS_AI_ENCRYPTION_KEY in .env}
+      - HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD=${HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD:?set HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD in .env}
     depends_on:
       mongo:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
     deploy:
       resources:
@@ -56,4 +55,3 @@ services:
 
 volumes:
   mongo_data:
-  healthops_data:

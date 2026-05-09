@@ -45,11 +45,11 @@ func NewMongoUserRepository(client *mongo.Client, dbName, prefix string) (*Mongo
 		collection: client.Database(dbName).Collection(prefix + "_users"),
 	}
 
-	indexCtx, indexCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	indexCtx, indexCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer indexCancel()
 
 	if err := repo.ensureIndexes(indexCtx); err != nil {
-		fmt.Printf("WARNING: MongoDB user index creation deferred: %v\n", err)
+		return nil, fmt.Errorf("create user indexes: %w", err)
 	}
 
 	return repo, nil

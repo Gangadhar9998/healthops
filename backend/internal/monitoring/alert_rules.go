@@ -1,10 +1,7 @@
 package monitoring
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -16,7 +13,6 @@ type AlertRuleEngine struct {
 	mu            sync.RWMutex
 	lastTriggered map[string]time.Time // ruleID+checkID -> last triggered time
 	logger        Logger
-	filePath      string // path for persisting rules to disk
 }
 
 // Logger defines the logging interface used by the alert engine.
@@ -33,58 +29,17 @@ func NewAlertRuleEngine(rules []AlertRule, logger Logger) *AlertRuleEngine {
 	}
 }
 
-// SetFilePath sets the file path for persisting rules and saves current rules.
+// SetFilePath is retained for older tests/integration points but alert rules
+// are no longer persisted to local files.
 func (e *AlertRuleEngine) SetFilePath(path string) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.filePath = path
 }
 
-// PersistIfNeeded writes rules to disk if the file doesn't exist yet.
+// PersistIfNeeded is a no-op. Runtime persistence must be provided by MongoDB.
 func (e *AlertRuleEngine) PersistIfNeeded() {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.filePath == "" {
-		return
-	}
-	if _, err := os.Stat(e.filePath); err != nil {
-		e.persist()
-	}
 }
 
-// persist saves current rules to disk. Caller must hold e.mu.
+// persist is intentionally a no-op so alert rule edits never create JSON files.
 func (e *AlertRuleEngine) persist() {
-	if e.filePath == "" {
-		return
-	}
-	data, err := json.MarshalIndent(e.rules, "", "  ")
-	if err != nil {
-		if e.logger != nil {
-			e.logger.Printf("Warning: failed to marshal alert rules: %v", err)
-		}
-		return
-	}
-	dir := filepath.Dir(e.filePath)
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		if e.logger != nil {
-			e.logger.Printf("Warning: failed to create alert rules dir: %v", err)
-		}
-		return
-	}
-	tmp := e.filePath + ".tmp"
-	// Tighten file permissions to 0600 (gosec G306). Alert rules are written by
-	// the service process only; no other UID needs read access.
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		if e.logger != nil {
-			e.logger.Printf("Warning: failed to write alert rules: %v", err)
-		}
-		return
-	}
-	if err := os.Rename(tmp, e.filePath); err != nil {
-		if e.logger != nil {
-			e.logger.Printf("Warning: failed to rename alert rules file: %v", err)
-		}
-	}
 }
 
 // Evaluate processes check results and returns triggered alerts.
@@ -326,17 +281,9 @@ func (e *AlertRuleEngine) sendToChannel(alert Alert, channel AlertChannel) {
 	}
 }
 
-// LoadRulesFromConfig loads alert rules from the data file, falling back to defaults.
+// LoadRulesFromConfig returns built-in starter alert rules. MongoDB-backed rule
+// persistence is wired explicitly by runtime repositories.
 func LoadRulesFromConfig(cfg interface{}) ([]AlertRule, error) {
-	rulesPath := filepath.Join("data", "alert_rules.json")
-	data, err := os.ReadFile(rulesPath)
-	if err == nil && len(data) > 0 {
-		var rules []AlertRule
-		if jsonErr := json.Unmarshal(data, &rules); jsonErr == nil {
-			return rules, nil
-		}
-	}
-	// No persisted rules — return sensible defaults
 	return DefaultAlertRules(), nil
 }
 

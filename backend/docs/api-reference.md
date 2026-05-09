@@ -1920,10 +1920,12 @@ These rules are loaded at startup and can be managed via the Alert Rules API.
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `CONFIG_PATH` | No | `config/default.json` | Config file location |
-| `STATE_PATH` | No | `data/state.json` | Local state file |
-| `MONGODB_URI` | No | — | Enable MongoDB mirroring |
-| `MONGODB_DATABASE` | No | `healthops` | MongoDB database name |
-| `MONGODB_COLLECTION_PREFIX` | No | `healthops` | MongoDB collection prefix |
+| `MONGODB_URI` | Yes | — | Required MongoDB connection string |
+| `MONGODB_DATABASE` | Yes | — | MongoDB database name |
+| `MONGODB_COLLECTION_PREFIX` | Yes | — | MongoDB collection prefix |
+| `HEALTHOPS_JWT_SECRET` | Yes | — | JWT signing secret, at least 32 bytes |
+| `HEALTHOPS_AI_ENCRYPTION_KEY` | Yes | — | AI provider encryption key, at least 32 bytes |
+| `HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD` | Yes | — | Bootstrap admin password |
 | `{check.mysql.dsnEnv}` | Per check | — | MySQL DSN (never logged) |
 
 ---

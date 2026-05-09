@@ -5,12 +5,12 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -106,9 +106,9 @@ type MongoAIConfigRepositoryConfig struct {
 	MongoURI       string
 	DatabaseName   string
 	CollectionName string
-	DataDir        string // Directory for encryption key storage
+	DataDir        string // Deprecated; encryption key comes from HEALTHOPS_AI_ENCRYPTION_KEY.
 	RetentionDays  int
-	// KeyPath allows overriding the default encryption key path via environment variable
+	// KeyPath is deprecated and retained only for API compatibility.
 	KeyPath string
 }
 
@@ -123,21 +123,6 @@ func NewMongoAIConfigRepository(cfg MongoAIConfigRepositoryConfig) (*MongoAIConf
 	if cfg.CollectionName == "" {
 		cfg.CollectionName = "healthops_ai_config"
 	}
-	if cfg.DataDir == "" {
-		cfg.DataDir = "data"
-	}
-
-	// Determine encryption key path: environment variable takes precedence
-	keyPath := cfg.KeyPath
-	if keyPath == "" {
-		// Check AI_ENCRYPTION_KEY_PATH environment variable
-		keyPath = os.Getenv("AI_ENCRYPTION_KEY_PATH")
-		if keyPath == "" {
-			// Default to data/.ai_enc_key
-			keyPath = filepath.Join(cfg.DataDir, ".ai_enc_key")
-		}
-	}
-
 	// Force IPv4: replace localhost with 127.0.0.1 to avoid IPv6 socket issues on macOS
 	uri := strings.ReplaceAll(cfg.MongoURI, "localhost", "127.0.0.1")
 
@@ -165,7 +150,7 @@ func NewMongoAIConfigRepository(cfg MongoAIConfigRepositoryConfig) (*MongoAIConf
 
 	// Initialize encryption key configuration
 	keyConfig := &EncryptionKeyConfig{
-		currentKeyPath: keyPath,
+		currentKeyPath: "env:HEALTHOPS_AI_ENCRYPTION_KEY",
 		previousKeys:   make(map[int]string),
 		currentVersion: 1, // Start at version 1
 	}
@@ -186,13 +171,12 @@ func NewMongoAIConfigRepository(cfg MongoAIConfigRepositoryConfig) (*MongoAIConf
 	}
 	repo.encKey = encKey
 
-	// Create indexes with separate timeout - don't fail if it takes too long
-	indexCtx, indexCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	indexCtx, indexCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer indexCancel()
 
 	if err := repo.ensureIndexes(indexCtx); err != nil {
-		// Log but don't fail - indexes will be created in background
-		fmt.Printf("WARNING: MongoDB index creation deferred: %v\n", err)
+		_ = client.Disconnect(context.Background())
+		return nil, fmt.Errorf("create ai config indexes: %w", err)
 	}
 
 	return repo, nil
@@ -211,7 +195,7 @@ func (r *MongoAIConfigRepository) ensureIndexes(ctx context.Context) error {
 	return err
 }
 
-// loadOrCreateEncKey loads an existing encryption key or creates a new one.
+// loadOrCreateEncKey loads the required encryption key from the environment.
 func (r *MongoAIConfigRepository) loadOrCreateEncKey() ([]byte, error) {
 	r.encKeyMutex.Lock()
 	defer r.encKeyMutex.Unlock()
@@ -219,32 +203,10 @@ func (r *MongoAIConfigRepository) loadOrCreateEncKey() ([]byte, error) {
 	r.keyConfig.mu.Lock()
 	defer r.keyConfig.mu.Unlock()
 
-	keyPath := r.keyConfig.currentKeyPath
-	data, err := os.ReadFile(keyPath)
-	if err == nil && len(data) >= 32 {
-		key, err := hex.DecodeString(strings.TrimSpace(string(data)))
-		if err == nil && len(key) == 32 {
-			return key, nil
-		}
+	key, err := normalizeEncryptionKey(os.Getenv("HEALTHOPS_AI_ENCRYPTION_KEY"))
+	if err != nil {
+		return nil, err
 	}
-
-	// Generate new key
-	key := make([]byte, 32)
-	if _, err := io.ReadFull(rand.Reader, key); err != nil {
-		return nil, fmt.Errorf("generate encryption key: %w", err)
-	}
-
-	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(keyPath), 0o755); err != nil {
-		return nil, fmt.Errorf("create key directory: %w", err)
-	}
-
-	// Save key with restricted permissions
-	encoded := hex.EncodeToString(key)
-	if err := os.WriteFile(keyPath, []byte(encoded), 0o600); err != nil {
-		return nil, fmt.Errorf("save encryption key: %w", err)
-	}
-
 	return key, nil
 }
 
@@ -621,7 +583,7 @@ func (r *MongoAIConfigRepository) Ping(ctx context.Context) error {
 	return r.client.Ping(ctx, nil)
 }
 
-// --- Key Rotation Support ---
+// --- Key Version Metadata ---
 
 // getCurrentKeyVersion returns the current encryption key version.
 func (r *MongoAIConfigRepository) getCurrentKeyVersion() int {
@@ -630,125 +592,13 @@ func (r *MongoAIConfigRepository) getCurrentKeyVersion() int {
 	return r.keyConfig.currentVersion
 }
 
-// RotateKey rotates the encryption key by re-encrypting all API keys with a new key.
-// Process:
-// 1. Generate new encryption key
-// 2. For each provider: decrypt with current key, encrypt with new key, update KeyVersion
-// 3. Update current key config
-// 4. Archive old key (don't delete - needed for recovery)
+// RotateKey is intentionally unsupported at runtime. AI encryption is backed
+// by HEALTHOPS_AI_ENCRYPTION_KEY, so rotation must be performed through the
+// deployment secret manager followed by a service restart and credential resave.
 func (r *MongoAIConfigRepository) RotateKey(ctx context.Context, newKeyPath string) error {
-	if newKeyPath == "" {
-		return errors.New("new key path is required")
-	}
-
-	r.encKeyMutex.Lock()
-	defer r.encKeyMutex.Unlock()
-
-	r.keyConfig.mu.Lock()
-	defer r.keyConfig.mu.Unlock()
-
-	// Store old key path before updating
-	oldKeyPath := r.keyConfig.currentKeyPath
-	oldVersion := r.keyConfig.currentVersion
-	oldKey := r.encKey
-
-	// Generate new key
-	newKey := make([]byte, 32)
-	if _, err := io.ReadFull(rand.Reader, newKey); err != nil {
-		return fmt.Errorf("generate new encryption key: %w", err)
-	}
-
-	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(newKeyPath), 0o755); err != nil {
-		return fmt.Errorf("create key directory: %w", err)
-	}
-
-	// Save new key with restricted permissions
-	encoded := hex.EncodeToString(newKey)
-	if err := os.WriteFile(newKeyPath, []byte(encoded), 0o600); err != nil {
-		return fmt.Errorf("save new encryption key: %w", err)
-	}
-
-	// Re-encrypt all providers with new key
-	cursor, err := r.collection.Find(ctx, bson.D{})
-	if err != nil {
-		// Rollback: delete new key
-		_ = os.Remove(newKeyPath)
-		return fmt.Errorf("find providers for rotation: %w", err)
-	}
-	defer cursor.Close(ctx)
-
-	var providers []AIProvider
-	for cursor.Next(ctx) {
-		var provider AIProvider
-		if err := cursor.Decode(&provider); err != nil {
-			// Rollback: delete new key
-			_ = os.Remove(newKeyPath)
-			return fmt.Errorf("decode provider: %w", err)
-		}
-		providers = append(providers, provider)
-	}
-
-	if err := cursor.Err(); err != nil {
-		// Rollback: delete new key
-		_ = os.Remove(newKeyPath)
-		return fmt.Errorf("cursor error: %w", err)
-	}
-
-	// Re-encrypt each provider
-	for _, provider := range providers {
-		if provider.APIKey == "" {
-			continue
-		}
-
-		// Decrypt with old key
-		plaintext, err := decryptString(oldKey, provider.APIKey)
-		if err != nil {
-			// Rollback: delete new key
-			_ = os.Remove(newKeyPath)
-			return fmt.Errorf("decrypt provider %s with old key: %w", provider.ID, err)
-		}
-
-		// Encrypt with new key
-		ciphertext, err := encryptString(newKey, plaintext)
-		if err != nil {
-			// Rollback: delete new key
-			_ = os.Remove(newKeyPath)
-			return fmt.Errorf("encrypt provider %s with new key: %w", provider.ID, err)
-		}
-
-		// Update in database
-		newVersion := oldVersion + 1
-		update := bson.M{"$set": bson.M{
-			"apiKey":     ciphertext,
-			"keyVersion": newVersion,
-			"updatedAt":  time.Now().UTC(),
-		}}
-		result, err := r.collection.UpdateOne(ctx, bson.M{"_id": provider.ID}, update)
-		if err != nil {
-			// Rollback: delete new key
-			_ = os.Remove(newKeyPath)
-			return fmt.Errorf("update provider %s: %w", provider.ID, err)
-		}
-		if result.MatchedCount == 0 {
-			// Rollback: delete new key
-			_ = os.Remove(newKeyPath)
-			return fmt.Errorf("provider %s not found", provider.ID)
-		}
-	}
-
-	// Archive old key
-	r.keyConfig.previousKeys[oldVersion] = oldKeyPath
-
-	// Update current key
-	r.keyConfig.currentKeyPath = newKeyPath
-	r.keyConfig.currentVersion = oldVersion + 1
-	r.encKey = newKey
-
-	fmt.Printf("INFO: Successfully rotated encryption key to version %d\n", r.keyConfig.currentVersion)
-	fmt.Printf("INFO: Previous key version %d archived at %s\n", oldVersion, oldKeyPath)
-
-	return nil
+	_ = ctx
+	_ = newKeyPath
+	return errors.New("AI key rotation is env-backed: update HEALTHOPS_AI_ENCRYPTION_KEY and restart")
 }
 
 // decryptWithKeyVersion attempts to decrypt a ciphertext using a specific key version.
@@ -761,19 +611,9 @@ func (r *MongoAIConfigRepository) decryptWithKeyVersion(cipherHex string, versio
 		return "", fmt.Errorf("key version %d not found in archive", version)
 	}
 
-	// Load the archived key
-	data, err := os.ReadFile(keyPath)
-	if err != nil {
-		return "", fmt.Errorf("read archived key: %w", err)
-	}
-
-	key, err := hex.DecodeString(strings.TrimSpace(string(data)))
+	key, err := normalizeEncryptionKey(keyPath)
 	if err != nil {
 		return "", fmt.Errorf("decode archived key: %w", err)
-	}
-
-	if len(key) != 32 {
-		return "", fmt.Errorf("archived key has invalid length: %d", len(key))
 	}
 
 	return decryptString(key, cipherHex)
@@ -786,13 +626,13 @@ func (r *MongoAIConfigRepository) GetKeyVersions() map[int]interface{} {
 
 	result := make(map[int]interface{})
 	result[r.keyConfig.currentVersion] = map[string]string{
-		"path":   r.keyConfig.currentKeyPath,
+		"source": r.keyConfig.currentKeyPath,
 		"status": "current",
 	}
 
 	for version, path := range r.keyConfig.previousKeys {
 		result[version] = map[string]string{
-			"path":   path,
+			"source": path,
 			"status": "archived",
 		}
 	}
@@ -860,4 +700,22 @@ func decryptString(key []byte, cipherHex string) (string, error) {
 	}
 
 	return string(plaintext), nil
+}
+
+func normalizeEncryptionKey(raw string) ([]byte, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, errors.New("HEALTHOPS_AI_ENCRYPTION_KEY is required")
+	}
+	if decoded, err := hex.DecodeString(raw); err == nil && len(decoded) == 32 {
+		return decoded, nil
+	}
+	if len([]byte(raw)) < 32 {
+		return nil, errors.New("HEALTHOPS_AI_ENCRYPTION_KEY must be at least 32 bytes")
+	}
+	if len([]byte(raw)) == 32 {
+		return []byte(raw), nil
+	}
+	sum := sha256.Sum256([]byte(raw))
+	return sum[:], nil
 }

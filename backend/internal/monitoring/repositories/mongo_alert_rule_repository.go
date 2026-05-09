@@ -114,14 +114,34 @@ func NewMongoAlertRuleRepository(uri, dbName, prefix string) (*MongoAlertRuleRep
 		collection: mongoAlertRuleCollectionAdapter{collection: collection},
 	}
 
-	// Create indexes in background (don't fail if they take too long)
-	indexCtx, indexCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	indexCtx, indexCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer indexCancel()
 	if err := repo.ensureIndexes(indexCtx); err != nil {
-		// Log but don't fail - indexes will be created in background
-		fmt.Printf("WARNING: Alert rule repository index creation deferred: %v\n", err)
+		return nil, &AlertRuleRepositoryError{Op: "index", Cause: err}
 	}
 
+	return repo, nil
+}
+
+func NewMongoAlertRuleRepositoryFromClient(client *mongo.Client, dbName, prefix string) (*MongoAlertRuleRepository, error) {
+	if client == nil {
+		return nil, &AlertRuleRepositoryError{Op: "new", Err: ErrAlertRuleRepositoryNotConfigured}
+	}
+	if dbName == "" {
+		dbName = "healthops"
+	}
+	if prefix == "" {
+		prefix = "healthops"
+	}
+	repo := &MongoAlertRuleRepository{
+		collection: mongoAlertRuleCollectionAdapter{collection: client.Database(dbName).Collection(prefix + "_alert_rules")},
+	}
+
+	indexCtx, indexCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer indexCancel()
+	if err := repo.ensureIndexes(indexCtx); err != nil {
+		return nil, &AlertRuleRepositoryError{Op: "index", Cause: err}
+	}
 	return repo, nil
 }
 

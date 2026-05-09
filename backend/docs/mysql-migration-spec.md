@@ -99,19 +99,19 @@ Validation rules:
    - `NotificationID, IncidentID, Channel, PayloadJSON, Status, RetryCount, LastError, CreatedAt, SentAt`
 5. `AIQueueItem` and `AIAnalysisResult`
 
-### 5.3 Persistence strategy
-Use file-backed repositories in `backend/data/` for v1:
-1. `mysql_samples.jsonl`
-2. `mysql_deltas.jsonl`
-3. `incident_snapshots.jsonl`
-4. `notification_outbox.jsonl`
-5. `ai_queue.jsonl`
-6. `ai_results.jsonl`
+### 5.3 Persistence Strategy
+Use MongoDB-backed repositories for v1:
+1. `{prefix}_mysql_samples`
+2. `{prefix}_mysql_deltas`
+3. `{prefix}_incident_snapshots`
+4. `{prefix}_notification_outbox`
+5. `{prefix}_ai_queue`
+6. `{prefix}_ai_results`
 
 Rules:
-1. Append-only writes with fsync-safe flush strategy already used by current storage patterns
-2. In-memory index for latest N reads per check
-3. Retention compaction job daily
+1. Startup fails when MongoDB is missing or unavailable.
+2. Repository queries use indexed `checkId`, `incidentId`, `status`, and `timestamp` fields.
+3. Retention pruning runs against MongoDB collections.
 
 ## 6. Rule Engine Changes
 Extend existing alert rule behavior to include streak semantics.
@@ -210,7 +210,7 @@ Mutating (auth required):
   - collection timeout handled cleanly
 
 ### Task M3: Sample + delta repository
-- Implement file-backed sample/delta repository
+- Implement MongoDB-backed sample/delta repository
 - Acceptance:
   - append and latest/recent reads are deterministic
   - delta handles counter reset with `max(0, diff)` behavior

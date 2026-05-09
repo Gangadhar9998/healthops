@@ -97,19 +97,13 @@ func (s *Service) getServer(ctx context.Context, id string) (RemoteServer, error
 	return cloneRemoteServer(srv), nil
 }
 
-func isServerReadFallbackError(err error) bool {
-	return err != nil && !errors.Is(err, ErrServerNotFound)
-}
-
 func (s *Service) handleServers(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		servers, err := s.listServers(r.Context())
 		if err != nil {
-			if s.logger != nil {
-				s.logger.Printf("Warning: falling back to cached servers after repository read failure: %v", err)
-			}
-			servers = cloneServers(s.cfg.Servers)
+			WriteAPIError(w, http.StatusServiceUnavailable, err)
+			return
 		}
 		WriteAPIResponse(w, http.StatusOK, NewAPIResponse(sanitizeServersForAPI(servers)))
 
@@ -227,12 +221,6 @@ func (s *Service) handleServerByID(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		srv, err := s.getServer(r.Context(), id)
 		if err != nil {
-			if isServerReadFallbackError(err) {
-				if cached, ok := s.cachedServer(id); ok {
-					WriteAPIResponse(w, http.StatusOK, NewAPIResponse(sanitizeServerForAPI(cached)))
-					return
-				}
-			}
 			if errors.Is(err, ErrServerNotFound) {
 				WriteAPIError(w, http.StatusNotFound, fmt.Errorf("server %q not found", id))
 				return
@@ -368,19 +356,12 @@ func (s *Service) handleServerTest(w http.ResponseWriter, r *http.Request) {
 
 	srv, err := s.getServer(r.Context(), id)
 	if err != nil {
-		if isServerReadFallbackError(err) {
-			if cached, ok := s.cachedServer(id); ok {
-				srv = cached
-			} else {
-				if errors.Is(err, ErrServerRepoOffline) || errors.Is(err, ErrServerRepositoryNotConfigured) {
-					WriteAPIError(w, http.StatusServiceUnavailable, err)
-				} else {
-					WriteAPIError(w, http.StatusInternalServerError, err)
-				}
-				return
-			}
-		} else if errors.Is(err, ErrServerNotFound) {
+		if errors.Is(err, ErrServerNotFound) {
 			WriteAPIError(w, http.StatusNotFound, fmt.Errorf("server %q not found", id))
+			return
+		}
+		if errors.Is(err, ErrServerRepoOffline) || errors.Is(err, ErrServerRepositoryNotConfigured) {
+			WriteAPIError(w, http.StatusServiceUnavailable, err)
 			return
 		} else {
 			WriteAPIError(w, http.StatusInternalServerError, err)

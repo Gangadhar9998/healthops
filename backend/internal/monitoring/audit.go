@@ -3,13 +3,10 @@ package monitoring
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
-	"sync"
 	"time"
 )
 
@@ -40,115 +37,6 @@ type AuditFilter struct {
 type AuditRepository interface {
 	InsertEvent(event AuditEvent) error
 	ListEvents(filter AuditFilter) ([]AuditEvent, error)
-}
-
-// FileAuditRepository implements audit logging to a file
-type FileAuditRepository struct {
-	mu     sync.RWMutex
-	path   string
-	events []AuditEvent
-}
-
-var _ AuditRepository = (*FileAuditRepository)(nil)
-
-// NewFileAuditRepository creates a new file-based audit repository
-func NewFileAuditRepository(path string) (*FileAuditRepository, error) {
-	if path == "" {
-		path = "data/audit.json"
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, fmt.Errorf("create audit dir: %w", err)
-	}
-
-	repo := &FileAuditRepository{path: path}
-	if raw, err := os.ReadFile(path); err == nil {
-		if err := json.Unmarshal(raw, &repo.events); err != nil {
-			return nil, fmt.Errorf("parse audit log: %w", err)
-		}
-	}
-
-	return repo, nil
-}
-
-func (r *FileAuditRepository) InsertEvent(event AuditEvent) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.events = append(r.events, event)
-	return r.flushLocked()
-}
-
-func (r *FileAuditRepository) ListEvents(filter AuditFilter) ([]AuditEvent, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	var results []AuditEvent
-
-	// Apply filters
-	for _, event := range r.events {
-		if filter.Action != "" && event.Action != filter.Action {
-			continue
-		}
-		if filter.Actor != "" && event.Actor != filter.Actor {
-			continue
-		}
-		if filter.Target != "" && event.Target != filter.Target {
-			continue
-		}
-		if filter.TargetID != "" && event.TargetID != filter.TargetID {
-			continue
-		}
-		if !filter.StartTime.IsZero() && event.Timestamp.Before(filter.StartTime) {
-			continue
-		}
-		if !filter.EndTime.IsZero() && event.Timestamp.After(filter.EndTime) {
-			continue
-		}
-		results = append(results, event)
-	}
-
-	// Sort by timestamp descending
-	sortEventsDescending(results)
-
-	// Apply pagination
-	if filter.Offset > 0 {
-		if filter.Offset >= len(results) {
-			return []AuditEvent{}, nil
-		}
-		results = results[filter.Offset:]
-	}
-	if filter.Limit > 0 && filter.Limit < len(results) {
-		results = results[:filter.Limit]
-	}
-
-	return results, nil
-}
-
-func (r *FileAuditRepository) flushLocked() error {
-	encoded, err := json.MarshalIndent(r.events, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode audit log: %w", err)
-	}
-	tmp := r.path + ".tmp"
-	if err := os.WriteFile(tmp, encoded, 0o600); err != nil {
-		return fmt.Errorf("write temp audit log: %w", err)
-	}
-	if err := os.Rename(tmp, r.path); err != nil {
-		return fmt.Errorf("replace audit log: %w", err)
-	}
-	return nil
-}
-
-func sortEventsDescending(events []AuditEvent) {
-	// Simple bubble sort for descending timestamp
-	n := len(events)
-	for i := 0; i < n-1; i++ {
-		for j := 0; j < n-i-1; j++ {
-			if events[j].Timestamp.Before(events[j+1].Timestamp) {
-				events[j], events[j+1] = events[j+1], events[j]
-			}
-		}
-	}
 }
 
 // AuditLogger provides audit logging functionality

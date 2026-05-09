@@ -8,7 +8,7 @@ import (
 	"medics-health-check/backend/internal/monitoring/ai"
 )
 
-// AIConfigStoreInterface is the interface that both file-based and MongoDB config stores must implement.
+// AIConfigStoreInterface is the interface implemented by the MongoDB config adapter.
 // This is defined in the ai package, but we reference it here to ensure type compatibility.
 type AIConfigStoreInterface interface {
 	Get() ai.AIServiceConfig
@@ -39,7 +39,10 @@ func NewMongoAIConfigStoreAdapter(repo *MongoAIConfigRepository) *MongoAIConfigS
 func (a *MongoAIConfigStoreAdapter) Get() ai.AIServiceConfig {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
+	return a.getUnlocked()
+}
 
+func (a *MongoAIConfigStoreAdapter) getUnlocked() ai.AIServiceConfig {
 	ctx := context.Background()
 	providers, err := a.repo.List(ctx)
 	if err != nil {
@@ -67,7 +70,7 @@ func (a *MongoAIConfigStoreAdapter) Update(mutator func(*ai.AIServiceConfig) err
 	defer a.mu.Unlock()
 
 	// Get current state
-	cfg := a.Get()
+	cfg := a.getUnlocked()
 
 	// Apply mutator
 	if err := mutator(&cfg); err != nil {

@@ -5,14 +5,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"medics-health-check/backend/internal/monitoring"
-	"medics-health-check/backend/internal/monitoring/ai"
-	"medics-health-check/backend/internal/monitoring/notify"
 )
 
 // ---------------------------------------------------------------------------
@@ -21,7 +18,7 @@ import (
 
 func TestContractMySQLSamplesEndpoint(t *testing.T) {
 	dir := t.TempDir()
-	repo, err := NewFileMySQLRepository(dir)
+	repo, err := newMemoryMySQLRepository(dir)
 	if err != nil {
 		t.Fatalf("create repo: %v", err)
 	}
@@ -92,7 +89,7 @@ func TestContractMySQLSamplesEndpoint(t *testing.T) {
 
 func TestContractMySQLDeltasEndpoint(t *testing.T) {
 	dir := t.TempDir()
-	repo, err := NewFileMySQLRepository(dir)
+	repo, err := newMemoryMySQLRepository(dir)
 	if err != nil {
 		t.Fatalf("create repo: %v", err)
 	}
@@ -154,8 +151,7 @@ func TestContractMySQLDeltasEndpoint(t *testing.T) {
 
 func TestContractIncidentSnapshotsEndpoint(t *testing.T) {
 	dir := t.TempDir()
-	snapPath := filepath.Join(dir, "snapshots.jsonl")
-	snapRepo, err := monitoring.NewFileSnapshotRepository(snapPath)
+	snapRepo, err := newMemorySnapshotRepository(dir)
 	if err != nil {
 		t.Fatalf("create snapshot repo: %v", err)
 	}
@@ -192,8 +188,7 @@ func TestContractIncidentSnapshotsEndpoint(t *testing.T) {
 
 func TestContractNotificationsEndpoint(t *testing.T) {
 	dir := t.TempDir()
-	outboxPath := filepath.Join(dir, "notifications.jsonl")
-	outbox, err := notify.NewFileNotificationOutbox(outboxPath)
+	outbox, err := newMemoryNotificationOutbox(dir)
 	if err != nil {
 		t.Fatalf("create outbox: %v", err)
 	}
@@ -234,7 +229,7 @@ func TestContractNotificationsEndpoint(t *testing.T) {
 
 func TestContractAIQueueEndpoint(t *testing.T) {
 	dir := t.TempDir()
-	aiQueue, err := ai.NewFileAIQueue(dir)
+	aiQueue, err := newMemoryAIQueue(dir)
 	if err != nil {
 		t.Fatalf("create ai queue: %v", err)
 	}
@@ -268,8 +263,7 @@ func TestContractAIQueueEndpoint(t *testing.T) {
 
 func TestContractMutatingEndpointsRequireAuth(t *testing.T) {
 	dir := t.TempDir()
-	outboxPath := filepath.Join(dir, "notifications.jsonl")
-	outbox, err := notify.NewFileNotificationOutbox(outboxPath)
+	outbox, err := newMemoryNotificationOutbox(dir)
 	if err != nil {
 		t.Fatalf("create outbox: %v", err)
 	}
@@ -282,7 +276,7 @@ func TestContractMutatingEndpointsRequireAuth(t *testing.T) {
 		PayloadJSON:    `{"msg":"test"}`,
 	})
 
-	aiQueue, err := ai.NewFileAIQueue(dir)
+	aiQueue, err := newMemoryAIQueue(dir)
 	if err != nil {
 		t.Fatalf("create ai queue: %v", err)
 	}
@@ -365,7 +359,7 @@ func TestSecurityNoSecretsInAPIResponses(t *testing.T) {
 	defer os.Unsetenv("MYSQL_TEST_DSN")
 
 	dir := t.TempDir()
-	repo, err := NewFileMySQLRepository(dir)
+	repo, err := newMemoryMySQLRepository(dir)
 	if err != nil {
 		t.Fatalf("create repo: %v", err)
 	}
@@ -438,13 +432,12 @@ func TestSecurityMySQLDSNRedaction(t *testing.T) {
 
 func TestSecurityAllMutatingEndpointsRequireAuth(t *testing.T) {
 	dir := t.TempDir()
-	outboxPath := filepath.Join(dir, "notifications.jsonl")
-	outbox, err := notify.NewFileNotificationOutbox(outboxPath)
+	outbox, err := newMemoryNotificationOutbox(dir)
 	if err != nil {
 		t.Fatalf("create outbox: %v", err)
 	}
 
-	aiQueue, err := ai.NewFileAIQueue(dir)
+	aiQueue, err := newMemoryAIQueue(dir)
 	if err != nil {
 		t.Fatalf("create ai queue: %v", err)
 	}
@@ -478,18 +471,17 @@ func TestSecurityAllMutatingEndpointsRequireAuth(t *testing.T) {
 
 func TestSecurityInputValidation(t *testing.T) {
 	dir := t.TempDir()
-	repo, err := NewFileMySQLRepository(dir)
+	repo, err := newMemoryMySQLRepository(dir)
 	if err != nil {
 		t.Fatalf("create repo: %v", err)
 	}
 
-	outboxPath := filepath.Join(dir, "notifications.jsonl")
-	outbox, err := notify.NewFileNotificationOutbox(outboxPath)
+	outbox, err := newMemoryNotificationOutbox(dir)
 	if err != nil {
 		t.Fatalf("create outbox: %v", err)
 	}
 
-	aiQueue, err := ai.NewFileAIQueue(dir)
+	aiQueue, err := newMemoryAIQueue(dir)
 	if err != nil {
 		t.Fatalf("create ai queue: %v", err)
 	}

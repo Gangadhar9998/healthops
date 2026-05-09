@@ -144,7 +144,7 @@ func TestHandleServersGetReadsRepositoryAndSyncsCache(t *testing.T) {
 	}
 }
 
-func TestHandleServersGetFallsBackToCacheWhenRepositoryReadFails(t *testing.T) {
+func TestHandleServersGetReturnsUnavailableWhenRepositoryReadFails(t *testing.T) {
 	service := NewService(&Config{
 		Servers: []RemoteServer{{
 			ID:   "cached-1",
@@ -163,16 +163,8 @@ func TestHandleServersGetFallsBackToCacheWhenRepositoryReadFails(t *testing.T) {
 
 	service.handleServers(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
-	}
-
-	var servers []RemoteServer
-	if err := decodeAPIResponseData(rec.Body.Bytes(), &servers); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if len(servers) != 1 || servers[0].ID != "cached-1" {
-		t.Fatalf("expected cached server fallback, got %+v", servers)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -312,7 +304,7 @@ func TestHandleServerByIDDeletePersistsRepositoryAndUpdatesCache(t *testing.T) {
 	}
 }
 
-func TestHandleServerByIDGetFallsBackToCachedServerWhenRepositoryReadFails(t *testing.T) {
+func TestHandleServerByIDGetReturnsUnavailableWhenRepositoryReadFails(t *testing.T) {
 	service := NewService(&Config{
 		Servers: []RemoteServer{{
 			ID:       "srv-1",
@@ -332,19 +324,8 @@ func TestHandleServerByIDGetFallsBackToCachedServerWhenRepositoryReadFails(t *te
 
 	service.handleServerByID(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-
-	var srv RemoteServer
-	if err := decodeAPIResponseData(rec.Body.Bytes(), &srv); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if srv.ID != "srv-1" {
-		t.Fatalf("expected cached server payload, got %+v", srv)
-	}
-	if srv.Password != "********" {
-		t.Fatalf("expected masked password in API payload, got %q", srv.Password)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

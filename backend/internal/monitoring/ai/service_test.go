@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,15 +12,10 @@ import (
 	"medics-health-check/backend/internal/monitoring"
 )
 
-// --- AI Config Store Tests ---
+// --- AI Config Tests ---
 
-func TestAIConfigStoreDefaults(t *testing.T) {
-	dir := t.TempDir()
-	store, err := NewAIConfigStore(dir)
-	if err != nil {
-		t.Fatalf("NewAIConfigStore: %v", err)
-	}
-
+func TestAIConfigDefaults(t *testing.T) {
+	store := newMemoryAIConfigStore()
 	cfg := store.Get()
 	if cfg.Enabled {
 		t.Error("expected disabled by default")
@@ -38,15 +31,10 @@ func TestAIConfigStoreDefaults(t *testing.T) {
 	}
 }
 
-func TestAIConfigStoreUpdatePersists(t *testing.T) {
-	dir := t.TempDir()
-	store, err := NewAIConfigStore(dir)
-	if err != nil {
-		t.Fatalf("NewAIConfigStore: %v", err)
-	}
+func TestMemoryAIConfigStoreUpdate(t *testing.T) {
+	store := newMemoryAIConfigStore()
 
-	// Update config
-	err = store.Update(func(cfg *AIServiceConfig) error {
+	err := store.Update(func(cfg *AIServiceConfig) error {
 		cfg.Enabled = true
 		cfg.MaxConcurrent = 5
 		cfg.Providers = append(cfg.Providers, AIProviderConfig{
@@ -63,15 +51,9 @@ func TestAIConfigStoreUpdatePersists(t *testing.T) {
 		t.Fatalf("Update: %v", err)
 	}
 
-	// Reload from disk
-	store2, err := NewAIConfigStore(dir)
-	if err != nil {
-		t.Fatalf("reload: %v", err)
-	}
-
-	cfg := store2.Get()
+	cfg := store.Get()
 	if !cfg.Enabled {
-		t.Error("expected enabled after reload")
+		t.Error("expected enabled after update")
 	}
 	if cfg.MaxConcurrent != 5 {
 		t.Errorf("expected maxConcurrent=5, got %d", cfg.MaxConcurrent)
@@ -79,9 +61,8 @@ func TestAIConfigStoreUpdatePersists(t *testing.T) {
 	if len(cfg.Providers) != 1 {
 		t.Fatalf("expected 1 provider, got %d", len(cfg.Providers))
 	}
-	// Key should be decrypted correctly
 	if cfg.Providers[0].APIKey != "sk-test-key-1234567890abcdef" {
-		t.Errorf("API key not decrypted correctly: %s", cfg.Providers[0].APIKey)
+		t.Errorf("API key not retained correctly: %s", cfg.Providers[0].APIKey)
 	}
 }
 
@@ -105,13 +86,9 @@ func TestAIConfigStoreMaskAPIKey(t *testing.T) {
 }
 
 func TestAIConfigStoreSafeView(t *testing.T) {
-	dir := t.TempDir()
-	store, err := NewAIConfigStore(dir)
-	if err != nil {
-		t.Fatalf("NewAIConfigStore: %v", err)
-	}
+	store := newMemoryAIConfigStore()
 
-	err = store.Update(func(cfg *AIServiceConfig) error {
+	err := store.Update(func(cfg *AIServiceConfig) error {
 		cfg.Providers = append(cfg.Providers, AIProviderConfig{
 			ID:       "test-openai",
 			Provider: AIProviderOpenAI,
@@ -143,14 +120,10 @@ func TestAIConfigStoreSafeView(t *testing.T) {
 }
 
 func TestAIConfigStoreValidation(t *testing.T) {
-	dir := t.TempDir()
-	store, err := NewAIConfigStore(dir)
-	if err != nil {
-		t.Fatalf("NewAIConfigStore: %v", err)
-	}
+	store := newMemoryAIConfigStore()
 
 	// Invalid: missing model
-	err = store.Update(func(cfg *AIServiceConfig) error {
+	err := store.Update(func(cfg *AIServiceConfig) error {
 		cfg.Providers = append(cfg.Providers, AIProviderConfig{
 			ID:       "bad",
 			Provider: AIProviderOpenAI,
@@ -163,39 +136,6 @@ func TestAIConfigStoreValidation(t *testing.T) {
 	})
 	if err == nil {
 		t.Error("expected validation error for missing model")
-	}
-}
-
-func TestAIConfigStoreEncryption(t *testing.T) {
-	dir := t.TempDir()
-	store, err := NewAIConfigStore(dir)
-	if err != nil {
-		t.Fatalf("NewAIConfigStore: %v", err)
-	}
-
-	secretKey := "sk-super-secret-api-key-12345"
-	err = store.Update(func(cfg *AIServiceConfig) error {
-		cfg.Providers = append(cfg.Providers, AIProviderConfig{
-			ID:       "enc-test",
-			Provider: AIProviderOpenAI,
-			Name:     "Enc Test",
-			APIKey:   secretKey,
-			Model:    "gpt-4o",
-			Enabled:  true,
-		})
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("Update: %v", err)
-	}
-
-	// Read raw file — API key should be encrypted
-	raw, err := os.ReadFile(filepath.Join(dir, "ai_config.json"))
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	if strings.Contains(string(raw), secretKey) {
-		t.Error("API key should be encrypted in file on disk")
 	}
 }
 
@@ -292,10 +232,8 @@ func TestNewAIProviderFactory(t *testing.T) {
 // --- AI Service Tests ---
 
 func TestAIServiceEnqueueAnalysis(t *testing.T) {
-	dir := t.TempDir()
-
-	configStore, _ := NewAIConfigStore(dir)
-	aiQueue, _ := NewFileAIQueue(dir)
+	configStore := newMemoryAIConfigStore()
+	aiQueue := newMemoryAIQueue()
 
 	svc := NewAIService(configStore, aiQueue, nil, nil, nil, nil)
 
@@ -333,15 +271,13 @@ func TestAIServiceEnqueueAnalysis(t *testing.T) {
 }
 
 func TestAIServiceNoProviderError(t *testing.T) {
-	dir := t.TempDir()
-
-	configStore, _ := NewAIConfigStore(dir)
+	configStore := newMemoryAIConfigStore()
 	_ = configStore.Update(func(cfg *AIServiceConfig) error {
 		cfg.Enabled = true
 		return nil
 	})
 
-	aiQueue, _ := NewFileAIQueue(dir)
+	aiQueue := newMemoryAIQueue()
 	svc := NewAIService(configStore, aiQueue, nil, nil, nil, nil)
 
 	_, err := svc.AnalyzeIncident(context.Background(), "inc-789", "")
@@ -354,8 +290,7 @@ func TestAIServiceNoProviderError(t *testing.T) {
 }
 
 func TestAIServiceGetResults(t *testing.T) {
-	dir := t.TempDir()
-	aiQueue, _ := NewFileAIQueue(dir)
+	aiQueue := newMemoryAIQueue()
 
 	// Complete an item with a result
 	_ = aiQueue.Enqueue("inc-result-1", "v1")
@@ -436,9 +371,8 @@ func TestExtractJSON(t *testing.T) {
 }
 
 func TestParseAnalysisResponse(t *testing.T) {
-	dir := t.TempDir()
-	configStore, _ := NewAIConfigStore(dir)
-	aiQueue, _ := NewFileAIQueue(dir)
+	configStore := newMemoryAIConfigStore()
+	aiQueue := newMemoryAIQueue()
 	svc := NewAIService(configStore, aiQueue, nil, nil, nil, nil)
 
 	// Test structured response
@@ -459,8 +393,7 @@ func TestParseAnalysisResponse(t *testing.T) {
 // --- AI API Handler Tests ---
 
 func TestAIAPIConfigGet(t *testing.T) {
-	dir := t.TempDir()
-	configStore, _ := NewAIConfigStore(dir)
+	configStore := newMemoryAIConfigStore()
 	handler := NewAIAPIHandler(nil, configStore, nil, &monitoring.Config{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/ai/config", nil)
@@ -481,8 +414,7 @@ func TestAIAPIConfigGet(t *testing.T) {
 }
 
 func TestAIAPIConfigUpdate(t *testing.T) {
-	dir := t.TempDir()
-	configStore, _ := NewAIConfigStore(dir)
+	configStore := newMemoryAIConfigStore()
 	handler := NewAIAPIHandler(nil, configStore, nil, &monitoring.Config{})
 
 	body := `{"enabled": true, "maxConcurrent": 4}`
@@ -504,9 +436,8 @@ func TestAIAPIConfigUpdate(t *testing.T) {
 }
 
 func TestAIAPIProvidersCRUD(t *testing.T) {
-	dir := t.TempDir()
-	configStore, _ := NewAIConfigStore(dir)
-	aiQueue, _ := NewFileAIQueue(dir)
+	configStore := newMemoryAIConfigStore()
+	aiQueue := newMemoryAIQueue()
 	aiService := NewAIService(configStore, aiQueue, nil, nil, nil, nil)
 	handler := NewAIAPIHandler(aiService, configStore, nil, &monitoring.Config{})
 
@@ -574,8 +505,7 @@ func TestAIAPIProvidersCRUD(t *testing.T) {
 }
 
 func TestAIAPIPromptsCRUD(t *testing.T) {
-	dir := t.TempDir()
-	configStore, _ := NewAIConfigStore(dir)
+	configStore := newMemoryAIConfigStore()
 	handler := NewAIAPIHandler(nil, configStore, nil, &monitoring.Config{})
 
 	// LIST defaults
@@ -614,9 +544,8 @@ func TestAIAPIPromptsCRUD(t *testing.T) {
 }
 
 func TestAIAPIHealthEndpoint(t *testing.T) {
-	dir := t.TempDir()
-	configStore, _ := NewAIConfigStore(dir)
-	aiQueue, _ := NewFileAIQueue(dir)
+	configStore := newMemoryAIConfigStore()
+	aiQueue := newMemoryAIQueue()
 	aiService := NewAIService(configStore, aiQueue, nil, nil, nil, nil)
 	handler := NewAIAPIHandler(aiService, configStore, nil, &monitoring.Config{})
 
@@ -630,9 +559,8 @@ func TestAIAPIHealthEndpoint(t *testing.T) {
 }
 
 func TestAIAPIResultsEndpoint(t *testing.T) {
-	dir := t.TempDir()
-	configStore, _ := NewAIConfigStore(dir)
-	aiQueue, _ := NewFileAIQueue(dir)
+	configStore := newMemoryAIConfigStore()
+	aiQueue := newMemoryAIQueue()
 	aiService := NewAIService(configStore, aiQueue, nil, nil, nil, nil)
 	handler := NewAIAPIHandler(aiService, configStore, nil, &monitoring.Config{})
 

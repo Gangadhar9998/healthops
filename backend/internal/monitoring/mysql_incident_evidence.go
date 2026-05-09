@@ -4,11 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
-	"medics-health-check/backend/internal/util/jsonl"
-	"os"
-	"path/filepath"
-	"sync"
 	"time"
 )
 
@@ -17,69 +12,6 @@ type IncidentSnapshotRepository interface {
 	SaveSnapshots(incidentID string, snaps []IncidentSnapshot) error
 	GetSnapshots(incidentID string) ([]IncidentSnapshot, error)
 	PruneBefore(cutoff time.Time) error
-}
-
-// FileSnapshotRepository implements IncidentSnapshotRepository with JSONL backing.
-type FileSnapshotRepository struct {
-	mu   sync.RWMutex
-	path string
-	data []IncidentSnapshot
-}
-
-// NewFileSnapshotRepository creates a file-backed snapshot repository.
-func NewFileSnapshotRepository(path string) (*FileSnapshotRepository, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, fmt.Errorf("create snapshot dir: %w", err)
-	}
-
-	repo := &FileSnapshotRepository{path: path}
-	var err error
-	repo.data, err = jsonl.Load[IncidentSnapshot](path)
-	if err != nil {
-		return nil, fmt.Errorf("load snapshots: %w", err)
-	}
-	return repo, nil
-}
-
-func (r *FileSnapshotRepository) SaveSnapshots(incidentID string, snaps []IncidentSnapshot) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	for _, snap := range snaps {
-		snap.IncidentID = incidentID
-		r.data = append(r.data, snap)
-		if err := jsonl.Append(r.path, snap); err != nil {
-			return fmt.Errorf("append snapshot: %w", err)
-		}
-	}
-	return nil
-}
-
-func (r *FileSnapshotRepository) GetSnapshots(incidentID string) ([]IncidentSnapshot, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	var result []IncidentSnapshot
-	for _, s := range r.data {
-		if s.IncidentID == incidentID {
-			result = append(result, s)
-		}
-	}
-	return result, nil
-}
-
-func (r *FileSnapshotRepository) PruneBefore(cutoff time.Time) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	pruned := r.data[:0]
-	for _, s := range r.data {
-		if !s.Timestamp.Before(cutoff) {
-			pruned = append(pruned, s)
-		}
-	}
-	r.data = pruned
-	return jsonl.Rewrite(r.path, r.data)
 }
 
 // MySQLEvidenceCollector captures evidence snapshots from MySQL on incident open.

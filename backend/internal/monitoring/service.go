@@ -39,14 +39,22 @@ type Service struct {
 	snapshotRepo      IncidentSnapshotRepository
 	userStore         UserStoreBackend
 	userAPI           *UserAPIHandler
-	serverMetricsRepo *ServerMetricsRepository
+	serverMetricsRepo ServerMetricsStore
 	serverRepo        ServerRepository
 	degradedMode      *DegradedMode
-	// alertRuleRepo     repositories.AlertRuleRepository // TODO: uncomment when needed
+	alertRuleRepo     AlertRuleRepository
+}
+
+type AlertRuleRepository interface {
+	List(context.Context) ([]AlertRule, error)
+	Get(context.Context, string) (*AlertRule, error)
+	Create(context.Context, *AlertRule) error
+	Update(context.Context, string, *AlertRule) error
+	Delete(context.Context, string) error
+	GetEnabled(context.Context) ([]AlertRule, error)
 }
 
 func NewService(cfg *Config, store Store, logger *log.Logger) *Service {
-	hasLogger := logger != nil
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
@@ -64,35 +72,25 @@ func NewService(cfg *Config, store Store, logger *log.Logger) *Service {
 		logger:    logger,
 	}
 
-	// Initialize degraded mode if store supports MongoDB health checks
-	if hybridStore, ok := store.(*HybridStore); ok && hybridStore.HasMongo() {
+	// Initialize degraded mode when the store exposes an active health check.
+	type storeHealthChecker interface {
+		Ping(context.Context) error
+	}
+	if healthChecker, ok := store.(storeHealthChecker); ok {
 		// Pass nil incident manager for now, will be set in SetIncidentManager
 		svc.degradedMode = NewDegradedMode(
-			func(ctx context.Context) error { return hybridStore.PingMongo(ctx) },
+			healthChecker.Ping,
 			nil,
 			logger,
 		)
 	}
 
-	// Initialize audit logger
-	if hasLogger {
-		auditRepo, err := NewFileAuditRepository("data/audit.json")
-		if err != nil {
-			logger.Printf("Warning: Failed to initialize audit logger: %v", err)
-		} else {
-			svc.auditLogger = NewAuditLogger(auditRepo, logger)
-		}
-	}
-
-	// Initialize alert rule engine with rules (loaded from file or defaults)
+	// Initialize alert rule engine with in-process defaults. Persistence is
+	// provided by explicit repository wiring; the service constructor does not
+	// create local files.
 	alertRules, _ := LoadRulesFromConfig(cfg)
 	if logger != nil {
 		svc.alertEngine = NewAlertRuleEngine(alertRules, logger)
-		svc.alertEngine.SetFilePath("data/alert_rules.json")
-		// Persist defaults to disk if no saved file existed
-		if len(alertRules) > 0 {
-			svc.alertEngine.PersistIfNeeded()
-		}
 	}
 
 	// Set up alert callback for scheduler
@@ -191,7 +189,7 @@ func (s *Service) SetSnapshotRepo(repo IncidentSnapshotRepository) {
 }
 
 // SetServerMetricsRepo sets the server metrics repository.
-func (s *Service) SetServerMetricsRepo(repo *ServerMetricsRepository) {
+func (s *Service) SetServerMetricsRepo(repo ServerMetricsStore) {
 	s.serverMetricsRepo = repo
 	s.runner.SetServerMetricsRepo(repo)
 }
@@ -201,11 +199,15 @@ func (s *Service) SetServerRepo(repo ServerRepository) {
 	s.serverRepo = repo
 }
 
+// ReplaceServers updates the runtime server cache used by the runner.
+func (s *Service) ReplaceServers(servers []RemoteServer) {
+	s.setCachedServers(servers)
+}
+
 // SetAlertRuleRepo sets the alert rule repository.
-// TODO: Uncomment when needed
-// func (s *Service) SetAlertRuleRepo(repo repositories.AlertRuleRepository) {
-// 	s.alertRuleRepo = repo
-// }
+func (s *Service) SetAlertRuleRepo(repo AlertRuleRepository) {
+	s.alertRuleRepo = repo
+}
 
 // SetUserStore sets the user store and creates the user API handler.
 func (s *Service) SetUserStore(us UserStoreBackend) {

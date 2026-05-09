@@ -6,6 +6,12 @@ Go backend for the HealthOps monitoring console. Provides health checks, MySQL m
 
 ```bash
 cd backend
+MONGODB_URI=mongodb://localhost:27017 \
+MONGODB_DATABASE=healthops \
+MONGODB_COLLECTION_PREFIX=healthops \
+HEALTHOPS_JWT_SECRET='change-me-at-least-32-characters' \
+HEALTHOPS_AI_ENCRYPTION_KEY='change-me-random-ai-secret' \
+HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD='change-me-admin-password' \
 go run ./cmd/healthops
 ```
 
@@ -23,14 +29,15 @@ go fmt ./...             # format before committing
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CONFIG_PATH` | `config/default.json` | JSON config file |
-| `STATE_PATH` | `data/state.json` | Persisted state file |
-| `DATA_DIR` | `data/` | JSONL repositories, AI config |
-| `MONGODB_URI` | — | Optional MongoDB mirror |
-| `MONGODB_DATABASE` | `healthops` | MongoDB database name |
-| `MONGODB_COLLECTION_PREFIX` | `healthops` | Collection prefix |
+| `MONGODB_URI` | — | **Required.** MongoDB connection string for authoritative storage |
+| `MONGODB_DATABASE` | `healthops` | **Required.** MongoDB database name |
+| `MONGODB_COLLECTION_PREFIX` | `healthops` | **Required.** Collection prefix |
+| `HEALTHOPS_JWT_SECRET` | — | **Required.** JWT signing secret; use at least 32 random characters |
+| `HEALTHOPS_AI_ENCRYPTION_KEY` | — | **Required.** Deployment-managed secret for encrypting AI provider keys |
+| `HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD` | — | **Required on first start.** Bootstraps or rotates the admin password |
 | `{check.mysql.dsnEnv}` | — | MySQL DSN per check (never logged) |
 
-MongoDB is best-effort only. The backend keeps running with the local file store if MongoDB is unavailable.
+MongoDB is the required authoritative storage backend for production and Compose deployments. Legacy file-store variables such as `STATE_PATH` and `DATA_DIR`, plus direct `state.json`/JSONL operational workflows, are obsolete and should not be used for deployment runbooks.
 
 ## Key Features
 
@@ -38,7 +45,7 @@ MongoDB is best-effort only. The backend keeps running with the local file store
 - **Server Management**: Add remote servers, SSH-based health checks for process/command/connectivity
 - **MySQL Monitoring**: Collects `SHOW GLOBAL STATUS/VARIABLES`, computes deltas, 9 default alert rules
 - **Incidents**: Auto-created from alert rules, acknowledge/resolve lifecycle, evidence snapshots
-- **Alert Rules**: 5 default rules out of the box. Configurable thresholds, cooldowns, consecutive breaches, per-check or global. File-persisted.
+- **Alert Rules**: 5 default rules out of the box. Configurable thresholds, cooldowns, consecutive breaches, per-check or global. Persisted in MongoDB.
 - **JWT Authentication**: Token-based auth with admin/viewer roles. Default credentials: `admin` / `admin`
 - **User Management**: Create, update, delete users with role-based access control
 - **Notification Channels**: 6 channel types (email, Slack, Discord, Telegram, webhooks, PagerDuty) with smart filters (severity, check IDs, check types, servers, tags). Professional HTML email templates with incident stats and dashboard links. Incident-level deduplication prevents alert storms.

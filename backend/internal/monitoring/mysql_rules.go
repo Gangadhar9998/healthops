@@ -1,38 +1,46 @@
 package monitoring
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 )
+
+// MySQLRuleStateStore persists rule evaluation state.
+type MySQLRuleStateStore interface {
+	LoadStates() (map[string]*AlertState, error)
+	SaveStates(map[string]*AlertState) error
+}
 
 // MySQLRuleEngine evaluates MySQL-specific rules with consecutive breach and recovery streak logic.
 type MySQLRuleEngine struct {
 	mu     sync.Mutex
 	rules  []AlertRule
 	states map[string]*AlertState // key: ruleCode+checkID
-	path   string
+	store  MySQLRuleStateStore
 }
 
-// NewMySQLRuleEngine creates a new rule engine with the given rules and state persistence path.
+// NewMySQLRuleEngine creates a new rule engine. The dataDir argument is kept
+// for older callers but is ignored; runtime state persistence is Mongo-backed
+// through NewMySQLRuleEngineWithStateStore.
 func NewMySQLRuleEngine(rules []AlertRule, dataDir string) (*MySQLRuleEngine, error) {
-	statePath := filepath.Join(dataDir, "mysql_rule_states.json")
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
-		return nil, fmt.Errorf("create rule state dir: %w", err)
-	}
+	return NewMySQLRuleEngineWithStateStore(rules, nil)
+}
 
+// NewMySQLRuleEngineWithStateStore creates a rule engine using a durable state
+// store. Passing nil creates an in-memory-only engine.
+func NewMySQLRuleEngineWithStateStore(rules []AlertRule, store MySQLRuleStateStore) (*MySQLRuleEngine, error) {
 	engine := &MySQLRuleEngine{
 		rules:  rules,
 		states: make(map[string]*AlertState),
-		path:   statePath,
+		store:  store,
 	}
 
-	// Load persisted state
-	if raw, err := os.ReadFile(statePath); err == nil {
-		var states map[string]*AlertState
-		if err := json.Unmarshal(raw, &states); err == nil {
+	if store != nil {
+		states, err := store.LoadStates()
+		if err != nil {
+			return nil, fmt.Errorf("load mysql rule states: %w", err)
+		}
+		if states != nil {
 			engine.states = states
 		}
 	}
@@ -145,6 +153,7 @@ func (e *MySQLRuleEngine) SetOpenIncidentID(ruleCode, checkID, incidentID string
 	key := stateKey(ruleCode, checkID)
 	if state, ok := e.states[key]; ok {
 		state.OpenIncidentID = incidentID
+		_ = e.persistStates()
 	}
 }
 
@@ -222,15 +231,10 @@ func ruleAppliesToCheck(rule AlertRule, checkID string) bool {
 }
 
 func (e *MySQLRuleEngine) persistStates() error {
-	data, err := json.MarshalIndent(e.states, "", "  ")
-	if err != nil {
-		return err
+	if e.store == nil {
+		return nil
 	}
-	tmp := e.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, e.path)
+	return e.store.SaveStates(e.states)
 }
 
 // DefaultMySQLRules returns the v1 default MySQL alert rules with starter thresholds.

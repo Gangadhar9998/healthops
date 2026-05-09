@@ -102,15 +102,26 @@ func NewMongoServerRepository(uri, dbName, prefix string) (*MongoServerRepositor
 		return nil, &ServerRepositoryError{Op: "new", Cause: err}
 	}
 
+	return NewMongoServerRepositoryFromClient(client, dbName, prefix)
+}
+
+func NewMongoServerRepositoryFromClient(client *mongo.Client, dbName, prefix string) (*MongoServerRepository, error) {
+	if client == nil {
+		return nil, &ServerRepositoryError{Op: "new", Err: ErrServerRepositoryNotConfigured}
+	}
+	if dbName == "" {
+		dbName = "healthops"
+	}
+	if prefix == "" {
+		prefix = "healthops"
+	}
 	collection := client.Database(dbName).Collection(prefix + "_servers")
 
-	// Create indexes with separate timeout - don't fail if it takes too long
-	indexCtx, indexCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	indexCtx, indexCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer indexCancel()
 
 	if err := ensureServerIndexes(indexCtx, collection); err != nil {
-		// Log but don't fail - indexes will be created in background
-		fmt.Printf("WARNING: MongoDB server index creation deferred: %v\n", err)
+		return nil, &ServerRepositoryError{Op: "index", Cause: err}
 	}
 
 	return newMongoServerRepositoryWithCollection(mongoCollectionAdapter{collection: collection}), nil

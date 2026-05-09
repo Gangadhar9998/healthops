@@ -95,9 +95,9 @@ const (
 	ExportJSON ExportFormat = "json"
 )
 
-// NOTE: AllNotifications() and AllItems() are methods on monitoring.FileNotificationOutbox
-// and monitoring.FileAIQueue respectively. They cannot be defined here because Go does not
-// allow defining methods on types from another package. They remain in the monitoring package.
+// NOTE: AllNotifications() and AllItems() are repository methods. They cannot
+// be defined here because Go does not allow defining methods on types from
+// another package.
 
 // RegisterAnalyticsRoutes registers analytics and export routes on the given mux.
 func (h *MySQLAPIHandler) RegisterAnalyticsRoutes(mux *http.ServeMux) {

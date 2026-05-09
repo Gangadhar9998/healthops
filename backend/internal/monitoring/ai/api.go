@@ -702,7 +702,7 @@ func (h *AIAPIHandler) handleMySQLAIAsk(w http.ResponseWriter, r *http.Request) 
 
 // --- Key Rotation ---
 
-// POST /api/v1/ai/keys/rotate — rotate encryption keys for AI provider API keys
+// POST /api/v1/ai/keys/rotate — explain env-backed AI key rotation.
 func (h *AIAPIHandler) handleKeyRotate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -714,64 +714,7 @@ func (h *AIAPIHandler) handleKeyRotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if MongoDB repository is available
-	if h.mongoAIRepo == nil {
-		monitoring.WriteAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("key rotation requires MongoDB AI config repository"))
-		return
-	}
-
-	// Type assert to access RotateKey method (using interface{} to avoid import cycle)
-	type rotateKeyer interface {
-		RotateKey(ctx context.Context, newKeyPath string) error
-		GetKeyVersions() map[int]interface{}
-	}
-
-	rotater, ok := h.mongoAIRepo.(rotateKeyer)
-	if !ok {
-		monitoring.WriteAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("repository does not support key rotation"))
-		return
-	}
-
-	var req struct {
-		NewKeyPath string `json:"newKeyPath"`
-	}
-
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		monitoring.WriteAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid request: %w", err))
-		return
-	}
-
-	if req.NewKeyPath == "" {
-		// Generate default path with version number
-		currentVersions := rotater.GetKeyVersions()
-		maxVersion := 1
-		for v := range currentVersions {
-			if v > maxVersion {
-				maxVersion = v
-			}
-		}
-		req.NewKeyPath = fmt.Sprintf("data/.ai_enc_key_v%d", maxVersion+1)
-	}
-
-	// Perform key rotation
-	if err := rotater.RotateKey(r.Context(), req.NewKeyPath); err != nil {
-		monitoring.WriteAPIError(w, http.StatusInternalServerError, fmt.Errorf("key rotation failed: %w", err))
-		return
-	}
-
-	if h.auditLogger != nil {
-		actor := monitoring.ExtractActorFromRequest(r, h.cfg)
-		_ = h.auditLogger.Log("ai.key_rotated", actor, "ai_config", "", map[string]interface{}{
-			"newKeyPath": req.NewKeyPath,
-		})
-	}
-
-	// Return updated key versions
-	versions := rotater.GetKeyVersions()
-	monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(map[string]interface{}{
-		"message":  "Key rotation completed successfully",
-		"versions": versions,
-	}))
+	monitoring.WriteAPIError(w, http.StatusNotImplemented, fmt.Errorf("AI encryption key rotation is deployment-managed: update HEALTHOPS_AI_ENCRYPTION_KEY, restart HealthOps, and resave provider credentials"))
 }
 
 // GET /api/v1/ai/keys — get encryption key version information
@@ -781,12 +724,10 @@ func (h *AIAPIHandler) handleKeyVersions(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Check if MongoDB repository is available
 	if h.mongoAIRepo == nil {
-		// Return empty versions for file-based storage
 		monitoring.WriteAPIResponse(w, http.StatusOK, monitoring.NewAPIResponse(map[string]interface{}{
 			"versions": map[int]interface{}{},
-			"message":  "Key versioning not available for file-based storage",
+			"message":  "Key versioning is available when the MongoDB AI repository is configured",
 		}))
 		return
 	}

@@ -2,8 +2,6 @@ package monitoring
 
 import (
 	"net/http"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -247,63 +245,6 @@ func TestAuditLogger_GetAuditEvents(t *testing.T) {
 				t.Errorf("GetAuditEvents() len = %v, want %v", len(events), tt.wantLen)
 			}
 		})
-	}
-}
-
-func TestFileAuditRepository(t *testing.T) {
-	tmpDir := filepath.Join(os.TempDir(), "audit-test")
-	defer os.RemoveAll(tmpDir)
-
-	auditPath := filepath.Join(tmpDir, "audit.json")
-
-	repo, err := NewFileAuditRepository(auditPath)
-	if err != nil {
-		t.Fatalf("NewFileAuditRepository() error = %v", err)
-	}
-
-	event := AuditEvent{
-		ID:        "audit-test-001",
-		Action:    "check.created",
-		Actor:     "test-user",
-		Target:    "check",
-		TargetID:  "check-test",
-		Timestamp: time.Now().UTC(),
-	}
-
-	// Test InsertEvent
-	if err := repo.InsertEvent(event); err != nil {
-		t.Errorf("InsertEvent() error = %v", err)
-	}
-
-	// Verify file was created
-	if _, err := os.Stat(auditPath); os.IsNotExist(err) {
-		t.Error("Audit file was not created")
-	}
-
-	// Test ListEvents
-	events, err := repo.ListEvents(AuditFilter{})
-	if err != nil {
-		t.Errorf("ListEvents() error = %v", err)
-	}
-	if len(events) != 1 {
-		t.Errorf("ListEvents() len = %v, want 1", len(events))
-	}
-	if events[0].ID != event.ID {
-		t.Errorf("ListEvents()[0].ID = %v, want %v", events[0].ID, event.ID)
-	}
-
-	// Test persistence - create new repo instance
-	repo2, err := NewFileAuditRepository(auditPath)
-	if err != nil {
-		t.Fatalf("NewFileAuditRepository() reload error = %v", err)
-	}
-
-	events2, err := repo2.ListEvents(AuditFilter{})
-	if err != nil {
-		t.Errorf("ListEvents() after reload error = %v", err)
-	}
-	if len(events2) != 1 {
-		t.Errorf("ListEvents() after reload len = %v, want 1", len(events2))
 	}
 }
 

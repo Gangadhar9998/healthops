@@ -23,11 +23,11 @@ https://github.com/user-attachments/assets/healthops-demo.mp4
 
 ## Why HealthOps?
 
-- **Zero-config start** — Run one command, get a full monitoring dashboard at `localhost:8080`
+- **Fast Compose start** — Run the app with MongoDB-backed persistence and a full monitoring dashboard at `localhost:8080`
 - **7 check types** — HTTP APIs, TCP ports, processes, commands, logs, MySQL databases, SSH remote servers
 - **AI incident analysis** — Bring your own key (OpenAI, Anthropic, Google, Ollama) to auto-analyze incidents
 - **Beautiful UI** — React + Tailwind dashboard with real-time SSE updates, charts, and dark mode
-- **Single binary** — No external dependencies required. Optional MongoDB mirror and MySQL monitoring
+- **MongoDB-backed storage** — MongoDB is the authoritative required store for checks, users, incidents, notifications, and AI configuration
 - **62+ API endpoints** — Full REST API for automation and integration
 - **Production-ready** — JWT auth, user management, notification channels, audit logging, Prometheus metrics, retention cleanup, encrypted AI keys
 
@@ -47,14 +47,22 @@ https://github.com/user-attachments/assets/healthops-demo.mp4
 
 ## Quick Start
 
-### Option 1: Run locally (Go + Node.js required)
+### Option 1: Run locally (Go + Node.js + MongoDB required)
 
 ```bash
 # Build frontend
 cd frontend && npm install && npm run build && cd ..
 
 # Start the backend (serves frontend too)
-cd backend && FRONTEND_DIR=../frontend/dist go run ./cmd/healthops
+cd backend && \
+  FRONTEND_DIR=../frontend/dist \
+  MONGODB_URI=mongodb://localhost:27017 \
+  MONGODB_DATABASE=healthops \
+  MONGODB_COLLECTION_PREFIX=healthops \
+  HEALTHOPS_JWT_SECRET='change-me-at-least-32-characters' \
+  HEALTHOPS_AI_ENCRYPTION_KEY='change-me-random-ai-secret' \
+  HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD='change-me-admin-password' \
+  go run ./cmd/healthops
 ```
 
 Open [http://localhost:8080](http://localhost:8080) — that's it.
@@ -62,6 +70,15 @@ Open [http://localhost:8080](http://localhost:8080) — that's it.
 ### Option 2: Docker Compose (recommended)
 
 ```bash
+cat > .env <<'EOF'
+MONGODB_URI=mongodb://mongo:27017
+MONGODB_DATABASE=healthops
+MONGODB_COLLECTION_PREFIX=healthops
+HEALTHOPS_JWT_SECRET=replace-with-at-least-32-random-characters
+HEALTHOPS_AI_ENCRYPTION_KEY=replace-with-a-random-ai-encryption-secret
+HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD=replace-with-a-strong-admin-password
+EOF
+
 docker compose up -d
 ```
 
@@ -79,7 +96,16 @@ docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d
 
 ```bash
 docker build -t healthops .
-docker run -p 8080:8080 healthops
+docker network create healthops || true
+docker run -d --name healthops-mongo --network healthops mongo:7
+docker run --rm --network healthops -p 8080:8080 \
+  -e MONGODB_URI=mongodb://healthops-mongo:27017 \
+  -e MONGODB_DATABASE=healthops \
+  -e MONGODB_COLLECTION_PREFIX=healthops \
+  -e HEALTHOPS_JWT_SECRET=replace-with-at-least-32-random-characters \
+  -e HEALTHOPS_AI_ENCRYPTION_KEY=replace-with-a-random-ai-encryption-secret \
+  -e HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD=replace-with-a-strong-admin-password \
+  healthops
 ```
 
 ### Verify it's running
@@ -134,7 +160,7 @@ Multi-channel alerting with smart filtering:
 - **5 default alert rules** out of the box (critical check failure, warning check failure, high failure rate, extended downtime, response time degradation)
 - Configurable thresholds, cooldowns, and consecutive-breach logic
 - Per-check or global scope
-- File-persisted at `data/alert_rules.json`
+- Persisted in MongoDB with the rest of the authoritative HealthOps state
 
 ### AI-Powered Analysis (BYOK)
 
@@ -187,8 +213,8 @@ AI auto-analyzes new incidents with configurable prompt templates. API keys are 
 │  └────┬─────┘ └────┬─────┘ └────┬─────┘ └───┬────┘ │
 │       │             │            │            │      │
 │  ┌────┴─────────────┴────────────┴────────────┴───┐  │
-│  │              Hybrid Store                       │  │
-│  │    (File-based primary + optional MongoDB)      │  │
+│  │              MongoDB Store                      │  │
+│  │    (authoritative required persistence)         │  │
 │  └────────────────────────────────────────────────┘  │
 │                                                      │
 │  JWT Auth · Users · Notifications · Alert Rules      │
@@ -203,6 +229,7 @@ AI auto-analyzes new incidents with configurable prompt templates. API keys are 
 | [Deployment Guide](docs/deployment-guide.md) | **Start here** — Complete setup for dev, Docker, and production. Covers ports, env vars, TLS/SSL, domains, notifications, SSH, MySQL, troubleshooting, and log debugging |
 | [API Reference](backend/docs/api-reference.md) | Full reference for all 62+ REST endpoints |
 | [Operational Runbook](docs/runbook.md) | Day-to-day operations, backup/restore, performance tuning |
+| [Backups](docs/backups.md) | MongoDB backup/restore commands using `scripts/healthops-mongo-backup.sh` and `scripts/healthops-mongo-restore.sh` |
 | [Architecture Decisions](docs/) | ADRs for scope, persistence, auth, incidents |
 
 ## Project Layout
@@ -223,7 +250,8 @@ healthops/
 │       └── hooks/            # SSE, export hooks
 ├── docker/                   # Docker configs & MySQL init
 ├── docs/                     # ADRs, runbook, plans
-├── docker-compose.yml        # Full stack: backend + Mongo + MySQL
+├── scripts/                  # MongoDB backup/restore helpers
+├── docker-compose.yml        # Full stack: backend + Mongo
 ├── Dockerfile                # Multi-stage build (frontend + backend)
 └── ReadMe.md                 # This file
 ```
@@ -235,24 +263,26 @@ healthops/
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CONFIG_PATH` | `config/default.json` | Check configuration file |
-| `STATE_PATH` | `data/state.json` | Persisted state file |
-| `DATA_DIR` | `data/` | Data directory for JSONL repos |
 | `FRONTEND_DIR` | — | Path to frontend dist folder |
-| `MONGODB_URI` | — | Optional MongoDB connection |
-| `MONGODB_DATABASE` | `healthops` | MongoDB database name |
-| `MONGODB_COLLECTION_PREFIX` | `healthops` | MongoDB collection prefix |
+| `MONGODB_URI` | — | **Required.** MongoDB connection for authoritative storage |
+| `MONGODB_DATABASE` | `healthops` | **Required.** MongoDB database name |
+| `MONGODB_COLLECTION_PREFIX` | `healthops` | **Required.** MongoDB collection prefix |
+| `HEALTHOPS_JWT_SECRET` | — | **Required.** JWT signing secret; use at least 32 random characters |
+| `HEALTHOPS_AI_ENCRYPTION_KEY` | — | **Required.** Deployment-managed secret for encrypting AI provider keys |
+| `HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD` | — | **Required on first start.** Sets/rotates the admin password |
 | `CORS_ORIGIN` | — | Allowed CORS origin (for custom domains) |
 | `MYSQL_DSN` / check `dsnEnv` | — | MySQL DSN for mysql checks |
 | `HEALTHOPS_REQUIRE_PROD_AUTH` | `false` | Production hardening gate. When `true`, refuses to start with default admin credentials or `allowCommandChecks=true`. See [Security Audit](backend/docs/security-audit.md#production-hardening-checklist). |
-| `HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD` | — | Sets/rotates the admin password on startup. Required for production with the Mongo user store. |
 | `HEALTHOPS_BOOTSTRAP_ADMIN_EMAIL` | `admin@healthops.local` | Email used when bootstrapping the admin user. |
 | `HEALTHOPS_BOOTSTRAP_ADMIN_RESET` | `false` | When `true`, overwrites the admin password on every start (use only during one-off rotations). |
+
+`STATE_PATH`, `DATA_DIR`, `state.json`, and JSONL repository files are legacy file-store implementation details. Do not use them for deployment, backup, or restore procedures; MongoDB is the source of truth.
 
 See the [Deployment Guide](docs/deployment-guide.md) for full details on all configuration options, notification setup, SSH servers, TLS, and troubleshooting.
 
 ### Check Configuration
 
-Checks are seeded from `backend/config/default.json` on the very first run, then managed via the API (`/api/v1/checks`) and persisted in `data/state.json`. Edits to `default.json` are ignored once state exists. Each check supports:
+Checks are seeded from `backend/config/default.json` on the very first run, then managed via the API (`/api/v1/checks`) and persisted in MongoDB. Edits to `default.json` are ignored once MongoDB contains state. Each check supports:
 
 ```json
 {
@@ -323,7 +353,7 @@ go run ./cmd/loadtest -scenario=query -duration=2m
 | Frontend | React 19, TypeScript, Vite 6, Tailwind CSS |
 | Charts | Recharts |
 | State | TanStack React Query |
-| Storage | File-based (primary) + MongoDB (optional mirror) |
+| Storage | MongoDB required authoritative storage |
 | Monitoring | Prometheus client, SSE |
 | Container | Docker multi-stage build |
 

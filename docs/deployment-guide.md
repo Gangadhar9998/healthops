@@ -1,6 +1,6 @@
 # HealthOps Production Deployment Guide
 
-Complete guide for deploying HealthOps from scratch. Covers local dev, Docker, bare-metal production, custom domains, TLS/SSL, notifications, and troubleshooting.
+Complete guide for deploying HealthOps from scratch. Covers local dev, Docker, bare-metal production, required MongoDB storage, custom domains, TLS/SSL, notifications, and troubleshooting.
 
 ---
 
@@ -31,6 +31,7 @@ Complete guide for deploying HealthOps from scratch. Covers local dev, Docker, b
 - Go 1.23+
 - Node.js 20+
 - npm
+- MongoDB 7+ reachable from the HealthOps backend
 
 ### Steps
 
@@ -43,7 +44,15 @@ cd healthops
 cd frontend && npm install && npm run build && cd ..
 
 # Start backend (serves frontend too)
-cd backend && FRONTEND_DIR=../frontend/dist go run ./cmd/healthops
+cd backend && \
+  FRONTEND_DIR=../frontend/dist \
+  MONGODB_URI=mongodb://localhost:27017 \
+  MONGODB_DATABASE=healthops \
+  MONGODB_COLLECTION_PREFIX=healthops \
+  HEALTHOPS_JWT_SECRET='change-me-at-least-32-characters' \
+  HEALTHOPS_AI_ENCRYPTION_KEY='change-me-random-ai-secret' \
+  HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD='change-me-admin-password' \
+  go run ./cmd/healthops
 ```
 
 Open http://localhost:8080. Login with `admin` / `admin`.
@@ -52,7 +61,15 @@ Open http://localhost:8080. Login with `admin` / `admin`.
 
 ```bash
 # Terminal 1: Start backend
-cd backend && FRONTEND_DIR=../frontend/dist go run ./cmd/healthops
+cd backend && \
+  FRONTEND_DIR=../frontend/dist \
+  MONGODB_URI=mongodb://localhost:27017 \
+  MONGODB_DATABASE=healthops \
+  MONGODB_COLLECTION_PREFIX=healthops \
+  HEALTHOPS_JWT_SECRET='change-me-at-least-32-characters' \
+  HEALTHOPS_AI_ENCRYPTION_KEY='change-me-random-ai-secret' \
+  HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD='change-me-admin-password' \
+  go run ./cmd/healthops
 
 # Terminal 2: Start Vite dev server (proxies API to backend)
 cd frontend && npm run dev
@@ -70,6 +87,14 @@ Frontend dev server runs on http://localhost:3000 with hot reload. API calls are
 # Clone and start
 git clone https://github.com/your-org/healthops.git
 cd healthops
+cat > .env <<'EOF'
+MONGODB_URI=mongodb://mongo:27017
+MONGODB_DATABASE=healthops
+MONGODB_COLLECTION_PREFIX=healthops
+HEALTHOPS_JWT_SECRET=replace-with-at-least-32-random-characters
+HEALTHOPS_AI_ENCRYPTION_KEY=replace-with-a-random-ai-encryption-secret
+HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD=replace-with-a-strong-admin-password
+EOF
 docker compose up -d
 ```
 
@@ -86,6 +111,9 @@ Create a `.env` file in the project root:
 MONGODB_URI=mongodb://mongo:27017
 MONGODB_DATABASE=healthops
 MONGODB_COLLECTION_PREFIX=healthops
+HEALTHOPS_JWT_SECRET=replace-with-at-least-32-random-characters
+HEALTHOPS_AI_ENCRYPTION_KEY=replace-with-a-random-ai-encryption-secret
+HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD=replace-with-a-strong-admin-password
 ```
 
 Create `docker-compose.override.yml` for production customizations:
@@ -115,14 +143,19 @@ MONGODB_URI=mongodb://healthops:your-secure-password@mongo:27017/healthops?authS
 docker compose up -d
 ```
 
-### Option C: Docker only (no MongoDB)
+### Option C: Docker only with external MongoDB
 
 ```bash
 docker build -t healthops .
 docker run -d \
   --name healthops \
   -p 8080:8080 \
-  -v healthops_data:/app/data \
+  -e MONGODB_URI=mongodb://your-mongo-host:27017 \
+  -e MONGODB_DATABASE=healthops \
+  -e MONGODB_COLLECTION_PREFIX=healthops \
+  -e HEALTHOPS_JWT_SECRET=replace-with-at-least-32-random-characters \
+  -e HEALTHOPS_AI_ENCRYPTION_KEY=replace-with-a-random-ai-encryption-secret \
+  -e HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD=replace-with-a-strong-admin-password \
   healthops
 ```
 
@@ -154,7 +187,7 @@ npm ci && npm run build
 
 ```bash
 # Create app directory
-sudo mkdir -p /opt/healthops/{config,data,frontend}
+sudo mkdir -p /opt/healthops/{config,frontend}
 
 # Copy files
 sudo cp backend/healthops /opt/healthops/
@@ -164,6 +197,24 @@ sudo cp -r frontend/dist/* /opt/healthops/frontend/
 # Create app user
 sudo useradd -r -s /usr/sbin/nologin healthops
 sudo chown -R healthops:healthops /opt/healthops
+```
+
+Create `/etc/healthops/healthops.env` and restrict it to the service user:
+
+```env
+MONGODB_URI=mongodb://localhost:27017
+MONGODB_DATABASE=healthops
+MONGODB_COLLECTION_PREFIX=healthops
+HEALTHOPS_JWT_SECRET=replace-with-at-least-32-random-characters
+HEALTHOPS_AI_ENCRYPTION_KEY=replace-with-a-random-ai-encryption-secret
+HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD=replace-with-a-strong-admin-password
+```
+
+```bash
+sudo install -d -m 0750 -o root -g healthops /etc/healthops
+sudoedit /etc/healthops/healthops.env
+sudo chown root:healthops /etc/healthops/healthops.env
+sudo chmod 0640 /etc/healthops/healthops.env
 ```
 
 ### Systemd Service
@@ -186,11 +237,9 @@ ExecStart=/opt/healthops/healthops
 
 # Environment
 Environment=CONFIG_PATH=/opt/healthops/config/default.json
-Environment=STATE_PATH=/opt/healthops/data/state.json
-Environment=DATA_DIR=/opt/healthops/data
 Environment=FRONTEND_DIR=/opt/healthops/frontend
 Environment=CORS_ORIGIN=https://monitor.yourdomain.com
-# Environment=MONGODB_URI=mongodb://localhost:27017/healthops
+EnvironmentFile=/etc/healthops/healthops.env
 
 # Logging
 StandardOutput=journal
@@ -200,7 +249,6 @@ SyslogIdentifier=healthops
 # Security hardening
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/opt/healthops/data
 
 # Restart policy
 Restart=always
@@ -224,32 +272,19 @@ sudo systemctl status healthops
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CONFIG_PATH` | `config/default.json` | Path to the checks configuration file |
-| `STATE_PATH` | `data/state.json` | Path to the local JSON state file |
-| `DATA_DIR` | `data/` | Directory for JSONL data files (outbox, queue, snapshots, etc.) |
 | `FRONTEND_DIR` | *(not set)* | Path to built frontend `dist/` folder. If unset, no frontend served |
-| `MONGODB_URI` | *(not set)* | MongoDB connection string. If set, enables hybrid storage |
-| `MONGODB_DATABASE` | `healthops` | MongoDB database name |
-| `MONGODB_COLLECTION_PREFIX` | `healthops` | Prefix for MongoDB collection names |
+| `MONGODB_URI` | *(not set)* | **Required.** MongoDB connection string for authoritative storage |
+| `MONGODB_DATABASE` | `healthops` | **Required.** MongoDB database name |
+| `MONGODB_COLLECTION_PREFIX` | `healthops` | **Required.** Prefix for MongoDB collection names |
+| `HEALTHOPS_JWT_SECRET` | *(not set)* | **Required.** JWT signing secret; use at least 32 random characters |
+| `HEALTHOPS_AI_ENCRYPTION_KEY` | *(not set)* | **Required.** Deployment-managed secret for AI provider key encryption |
+| `HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD` | *(not set)* | **Required on first start.** Bootstraps or rotates the admin password |
 | `CORS_ORIGIN` | *(not set)* | Allowed CORS origin for SSE endpoint. If unset, same-origin only |
 | `MYSQL_DSN` or check-specific `dsnEnv` | *(not set)* | MySQL DSN for mysql checks. Never logged |
 
-### Data Files Created in `DATA_DIR`
+### Obsolete file-store variables
 
-| File | Purpose |
-|------|---------|
-| `state.json` | Primary state: checks config, results, timestamps |
-| `audit.json` | Audit log of all API mutations |
-| `alert_rules.json` | Persisted alert rule configurations |
-| `notification_channels.json` | Notification channel configs |
-| `notification_outbox.jsonl` | Notification delivery history |
-| `incident_snapshots.jsonl` | Evidence snapshots for incidents |
-| `ai_config.json` | BYOK AI provider configs (keys encrypted) |
-| `.ai_enc_key` | AES-256-GCM key for AI config encryption |
-| `.jwt_secret` | Auto-generated JWT signing secret |
-| `users.json` | User accounts and hashed passwords |
-| `mysql_samples.jsonl` | MySQL status snapshots |
-| `mysql_deltas.jsonl` | MySQL computed delta metrics |
-| `ai_queue.jsonl` | AI analysis job queue |
+`STATE_PATH`, `DATA_DIR`, `state.json`, and JSONL repository files are legacy file-store implementation details. Do not use them for production deployment, backup, restore, or operational checks. MongoDB is the authoritative required storage backend.
 
 ---
 
@@ -259,7 +294,7 @@ sudo systemctl status healthops
 |------|---------|----------|-------|
 | `8080` | HealthOps HTTP API + Frontend | HTTP | Main application port. Configurable via `server.addr` in config |
 | `3000` | Vite dev server (dev only) | HTTP | Frontend hot-reload. Only used during development |
-| `27017` | MongoDB | TCP | Optional. Only if `MONGODB_URI` is set |
+| `27017` | MongoDB | TCP | Required for HealthOps authoritative storage |
 | `3306` | MySQL | TCP | Only if mysql checks are configured |
 | `22` | SSH | TCP | Only if SSH remote server checks are configured |
 
@@ -772,7 +807,7 @@ curl -X POST http://localhost:8080/api/v1/ai/providers \
 
 Supported provider types: `openai`, `anthropic`, `google`, `ollama`, `custom`
 
-API keys are AES-256-GCM encrypted at rest in `data/ai_config.json`.
+API keys are AES-256-GCM encrypted at rest in MongoDB. Provide `HEALTHOPS_AI_ENCRYPTION_KEY` from your deployment secret manager and back it up with the rest of the required environment secrets.
 
 ### Using Local Ollama
 
@@ -797,41 +832,36 @@ curl -X POST http://localhost:8080/api/v1/ai/providers \
 
 | Path | Content | Critical? |
 |------|---------|-----------|
-| `data/state.json` | Check configs, results | Yes |
-| `data/users.json` | User accounts | Yes |
-| `data/.jwt_secret` | JWT signing key | Yes |
-| `data/alert_rules.json` | Alert configurations | Yes |
-| `data/notification_channels.json` | Channel configs | Yes |
-| `data/ai_config.json` + `.ai_enc_key` | AI provider configs | If using AI |
+| MongoDB database named by `MONGODB_DATABASE` | Checks, results, users, incidents, alert rules, notification config, AI config, audit data | Yes |
+| Deployment secret store / `.env` | `MONGODB_URI`, `MONGODB_DATABASE`, `MONGODB_COLLECTION_PREFIX`, `HEALTHOPS_JWT_SECRET`, `HEALTHOPS_AI_ENCRYPTION_KEY`, `HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD` | Yes |
 | `config/default.json` | Check definitions | Yes |
-| `data/*.jsonl` | Historical data (outbox, snapshots, queue) | Nice to have |
 
 ### Backup Script
 
+Use the repository helper for self-managed MongoDB backups:
+
 ```bash
-#!/bin/bash
-BACKUP_DIR="/backup/healthops/$(date +%Y%m%d-%H%M)"
-DATA_DIR="/opt/healthops/data"
-
-mkdir -p "$BACKUP_DIR"
-cp "$DATA_DIR"/{state.json,users.json,.jwt_secret,alert_rules.json,notification_channels.json} "$BACKUP_DIR/" 2>/dev/null
-cp "$DATA_DIR"/{ai_config.json,.ai_enc_key} "$BACKUP_DIR/" 2>/dev/null
-cp /opt/healthops/config/default.json "$BACKUP_DIR/"
-
-# Optional: backup MongoDB
-# mongodump --uri="$MONGODB_URI" --out "$BACKUP_DIR/mongodb"
-
-# Keep last 30 backups
-cd /backup/healthops && ls -dt */ | tail -n +31 | xargs rm -rf
-
-echo "Backup complete: $BACKUP_DIR"
+ENV_FILE=/etc/healthops/healthops.env \
+BACKUP_DIR=/var/backups/healthops \
+scripts/healthops-mongo-backup.sh
 ```
+
+Schedule it from the repository/deployment directory, then ship the generated
+`*.archive.gz` file to encrypted remote storage. Back up the deployment env
+file or secret-manager values separately, especially
+`HEALTHOPS_AI_ENCRYPTION_KEY` and `HEALTHOPS_JWT_SECRET`.
 
 ### Restore
 
 ```bash
 sudo systemctl stop healthops
-cp /backup/healthops/YYYYMMDD-HHMM/* /opt/healthops/data/
+sudo install -m 0640 -o root -g healthops /path/to/healthops.env /etc/healthops/healthops.env
+set -a
+. /etc/healthops/healthops.env
+set +a
+CONFIRM_RESTORE="$MONGODB_DATABASE" \
+  scripts/healthops-mongo-restore.sh /var/backups/healthops/healthops-mongo-healthops-20260509T120000Z.archive.gz
+cp /path/to/default.json /opt/healthops/config/default.json
 sudo systemctl start healthops
 ```
 
@@ -879,10 +909,11 @@ curl -v http://localhost:8080/api/v1/auth/login \
   -X POST -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"admin"}'
 
-# If password was changed and forgotten, delete users.json to reset
-# WARNING: This removes all users and recreates admin:admin
+# If password was changed and forgotten, rotate it through the bootstrap env
 sudo systemctl stop healthops
-rm /opt/healthops/data/users.json
+sudoedit /etc/healthops/healthops.env
+# Set HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD and, for a one-time forced reset:
+# HEALTHOPS_BOOTSTRAP_ADMIN_RESET=true
 sudo systemctl start healthops
 ```
 
@@ -923,14 +954,13 @@ The API limits to 100 requests per minute per IP. If you hit this:
 |------------|-------------|---------|
 | Systemd | journald | `sudo journalctl -u healthops -f` |
 | Docker | Container logs | `docker compose logs -f healthops` |
-| Docker (file) | `/app/data/healthops.log` inside container | `docker exec healthops tail -f /app/data/healthops.log` |
 | Manual run | stdout/stderr | Visible in terminal |
 
 ### Log Format
 
 ```
 healthops 2026/04/19 10:15:30.123456 HTTP listening on :8080
-healthops 2026/04/19 10:15:30.234567 running with local file persistence
+healthops 2026/04/19 10:15:30.234567 storage backend selected mode=mongodb_primary
 healthops 2026/04/19 10:15:30.345678 SECURITY WARNING: Authentication is disabled
 healthops 2026/04/19 10:15:30.456789 Notification channels initialized
 healthops 2026/04/19 10:15:30.567890 User management initialized
@@ -989,15 +1019,12 @@ sudo journalctl -u healthops -f | grep -i "notif\|dispatch\|channel\|webhook\|sl
 6. **Are SSRF protections blocking it?**
    Webhook URLs to `localhost`, private IPs (`192.168.x.x`, `10.x.x.x`), and cloud metadata (`169.254.169.254`) are blocked for security. Use public URLs.
 
-7. **Check the notification outbox for errors:**
+7. **Check notification delivery history for errors:**
    ```bash
-   # In Docker
-   docker exec healthops cat /app/data/notification_outbox.jsonl | tail -20
-
-   # Bare metal
-   tail -20 /opt/healthops/data/notification_outbox.jsonl
+   curl -s http://localhost:8080/api/v1/notifications?limit=20 \
+     -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
    ```
-   Look for `"error"` fields in the JSONL entries.
+   Look for `"error"` fields in the returned entries.
 
 8. **Is the check linked to the channel?**
    If the check has `notificationChannelIDs`, only those channels receive alerts. If empty, all matching channels fire.
@@ -1013,11 +1040,9 @@ sudo journalctl -u healthops -f | grep -i "notif\|dispatch\|channel\|webhook\|sl
 All API mutations are recorded in the audit log:
 
 ```bash
-# View recent audit entries
-cat data/audit.json | python3 -m json.tool | tail -50
-
-# Docker
-docker exec healthops cat /app/data/audit.json | python3 -m json.tool | tail -50
+# View recent audit entries through the API or your MongoDB/audit export pipeline.
+curl -s http://localhost:8080/api/v1/audit \
+  -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
 ```
 
 ### Prometheus Metrics
@@ -1117,5 +1142,5 @@ Metrics:         http://localhost:8080/metrics
 
 Default login:   admin / admin
 Config file:     config/default.json
-Data directory:  data/
+Storage:         MongoDB (`MONGODB_URI` / `MONGODB_DATABASE`)
 ```

@@ -385,9 +385,10 @@ func (d *NotificationDispatcher) sendToChannel(ch NotificationChannelConfig, pay
 	if d.outbox != nil {
 		payloadJSON, _ := json.Marshal(payload)
 		evt := monitoring.NotificationEvent{
-			IncidentID:  incidentID,
-			Channel:     fmt.Sprintf("%s:%s", ch.Type, ch.Name),
-			PayloadJSON: string(payloadJSON),
+			NotificationID: fmt.Sprintf("notif-%s-%d", incidentID, time.Now().UnixNano()),
+			IncidentID:     incidentID,
+			Channel:        fmt.Sprintf("%s:%s", ch.Type, ch.Name),
+			PayloadJSON:    string(payloadJSON),
 		}
 		if err != nil {
 			evt.LastError = err.Error()
@@ -445,9 +446,10 @@ func (d *NotificationDispatcher) sendDigest(ch NotificationChannelConfig, payloa
 		}
 		digestJSON, _ := json.Marshal(payloads)
 		evt := monitoring.NotificationEvent{
-			IncidentID:  strings.Join(ids, ","),
-			Channel:     fmt.Sprintf("%s:%s", ch.Type, ch.Name),
-			PayloadJSON: string(digestJSON),
+			NotificationID: fmt.Sprintf("notif-%d", time.Now().UnixNano()),
+			IncidentID:     strings.Join(ids, ","),
+			Channel:        fmt.Sprintf("%s:%s", ch.Type, ch.Name),
+			PayloadJSON:    string(digestJSON),
 		}
 		if err != nil {
 			evt.LastError = err.Error()
@@ -641,6 +643,10 @@ func (d *NotificationDispatcher) sendPagerDuty(ch NotificationChannelConfig, p N
 // --- Helpers ---
 
 func (d *NotificationDispatcher) postJSON(url string, body interface{}, headers map[string]string) error {
+	if err := validateWebhookURL(url); err != nil {
+		return err
+	}
+
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("marshal body: %w", err)

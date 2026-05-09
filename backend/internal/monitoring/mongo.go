@@ -58,6 +58,20 @@ func NewMongoMirror(uri, dbName, prefix string, retentionDays int) (*MongoMirror
 		return nil, fmt.Errorf("mongo ping failed: %w", err)
 	}
 
+	return NewMongoMirrorFromClient(client, dbName, prefix, retentionDays)
+}
+
+func NewMongoMirrorFromClient(client *mongo.Client, dbName, prefix string, retentionDays int) (*MongoMirror, error) {
+	if client == nil {
+		return nil, fmt.Errorf("mongo client is required")
+	}
+	if dbName == "" {
+		dbName = "healthops"
+	}
+	if prefix == "" {
+		prefix = "healthops"
+	}
+
 	mirror := &MongoMirror{
 		client:        client,
 		db:            client.Database(dbName),
@@ -68,19 +82,25 @@ func NewMongoMirror(uri, dbName, prefix string, retentionDays int) (*MongoMirror
 		retentionDays: retentionDays,
 	}
 
-	// Create indexes with separate timeout - don't fail if it takes too long
-	indexCtx, indexCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	indexCtx, indexCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer indexCancel()
 
 	if err := mirror.ensureIndexes(indexCtx); err != nil {
-		// Log but don't fail - indexes will be created in background
-		fmt.Printf("WARNING: MongoDB index creation deferred: %v\n", err)
+		return nil, fmt.Errorf("create mongodb mirror indexes: %w", err)
 	}
 
 	return mirror, nil
 }
 
 func (m *MongoMirror) ensureIndexes(ctx context.Context) error {
+	if _, err := m.checks.Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "type", Value: 1}}},
+		{Keys: bson.D{{Key: "server", Value: 1}}},
+		{Keys: bson.D{{Key: "enabled", Value: 1}}},
+	}); err != nil && !indexAlreadyExists(err) {
+		return err
+	}
+
 	_, err := m.results.Indexes().CreateMany(ctx, []mongo.IndexModel{
 		{Keys: bson.D{{Key: "checkId", Value: 1}, {Key: "finishedAt", Value: -1}}},
 		{Keys: bson.D{{Key: "finishedAt", Value: -1}}},
@@ -224,13 +244,22 @@ func (m *MongoMirror) readStateMeta(ctx context.Context) (State, error) {
 }
 
 func (m *MongoMirror) upsertChecks(ctx context.Context, checks []CheckConfig) error {
+	ids := make([]string, 0, len(checks))
 	for _, check := range checks {
 		if check.ID == "" {
 			continue
 		}
+		ids = append(ids, check.ID)
 		if _, err := m.checks.ReplaceOne(ctx, bson.M{"_id": check.ID}, check, options.Replace().SetUpsert(true)); err != nil {
 			return err
 		}
+	}
+	filter := bson.M{}
+	if len(ids) > 0 {
+		filter = bson.M{"_id": bson.M{"$nin": ids}}
+	}
+	if _, err := m.checks.DeleteMany(ctx, filter); err != nil {
+		return err
 	}
 	return nil
 }

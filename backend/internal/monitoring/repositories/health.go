@@ -20,7 +20,7 @@ type HealthStatus struct {
 // - Honor context cancellation/timeout
 //
 // This interface is optional for repositories that don't require health checks
-// (e.g., in-memory stores, file-based stores without external dependencies).
+// (e.g., in-memory stores without external dependencies).
 type HealthChecker interface {
 	// HealthCheck verifies the repository is operational
 	HealthCheck(ctx context.Context) (*HealthStatus, error)

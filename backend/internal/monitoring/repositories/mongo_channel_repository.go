@@ -48,15 +48,36 @@ func NewMongoChannelRepository(uri, dbName, collectionPrefix string, timeoutSeco
 		return nil, fmt.Errorf("mongo ping failed: %w", err)
 	}
 
+	return newMongoChannelRepositoryFromCollection(client, dbName, client.Database(dbName).Collection(collectionPrefix+"_notification_channels"), time.Duration(timeoutSeconds)*time.Second)
+}
+
+func NewMongoChannelRepositoryFromClient(client *mongo.Client, dbName, collectionPrefix string, timeoutSeconds int) (*MongoChannelRepository, error) {
+	if client == nil {
+		return nil, fmt.Errorf("mongo client is required")
+	}
+	if dbName == "" {
+		dbName = "healthops"
+	}
+	if collectionPrefix == "" {
+		collectionPrefix = "healthops"
+	}
+	if timeoutSeconds == 0 {
+		timeoutSeconds = 5
+	}
+	return newMongoChannelRepositoryFromCollection(client, dbName, client.Database(dbName).Collection(collectionPrefix+"_notification_channels"), time.Duration(timeoutSeconds)*time.Second)
+}
+
+func newMongoChannelRepositoryFromCollection(client *mongo.Client, dbName string, coll *mongo.Collection, timeout time.Duration) (*MongoChannelRepository, error) {
 	repo := &MongoChannelRepository{
 		client:  client,
 		db:      client.Database(dbName),
-		coll:    client.Database(dbName).Collection(collectionPrefix + "_notification_channels"),
-		timeout: time.Duration(timeoutSeconds) * time.Second,
+		coll:    coll,
+		timeout: timeout,
 	}
-
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	if err := repo.ensureIndexes(ctx); err != nil {
-		fmt.Printf("WARNING: MongoDB channel index creation deferred: %v\n", err)
+		return nil, fmt.Errorf("create notification channel indexes: %w", err)
 	}
 
 	return repo, nil

@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -391,21 +392,18 @@ func TestEncryptionDecryption(t *testing.T) {
 	}
 }
 
-// TestKeyRotation tests the encryption key rotation functionality.
-func TestKeyRotation(t *testing.T) {
+// TestKeyRotationIsDeploymentManaged verifies runtime rotation is disabled
+// now that the encryption key is supplied by deployment secrets.
+func TestKeyRotationIsDeploymentManaged(t *testing.T) {
 	// Skip cleanly when Mongo is unreachable.
 	_ = mongotest.Connect(t, 2*time.Second)
 	mongoURI := mongotest.URI()
-
-	// Create temporary directory for test encryption keys
-	tempDir := t.TempDir()
 
 	// Create repository
 	cfg := MongoAIConfigRepositoryConfig{
 		MongoURI:       mongoURI,
 		DatabaseName:   "healthops_test",
 		CollectionName: "test_key_rotation",
-		DataDir:        tempDir,
 		RetentionDays:  7,
 	}
 
@@ -455,49 +453,28 @@ func TestKeyRotation(t *testing.T) {
 		t.Errorf("Expected at least one key version before rotation")
 	}
 
-	// Perform key rotation
-	newKeyPath := tempDir + "/.ai_enc_key_v2"
-	err = repo.RotateKey(ctx, newKeyPath)
-	if err != nil {
-		t.Fatalf("Failed to rotate key: %v", err)
+	err = repo.RotateKey(ctx, "new-secret")
+	if err == nil {
+		t.Fatal("expected deployment-managed rotation error")
+	}
+	if !strings.Contains(err.Error(), "HEALTHOPS_AI_ENCRYPTION_KEY") {
+		t.Fatalf("expected env-backed rotation message, got %v", err)
 	}
 
-	// Verify the provider's API key can still be decrypted after rotation
 	retrievedAfter, err := repo.Get(ctx, provider.ID)
 	if err != nil {
-		t.Fatalf("Failed to retrieve provider after rotation: %v", err)
+		t.Fatalf("Failed to retrieve provider after failed rotation: %v", err)
 	}
 	if retrievedAfter.APIKey != provider.APIKey {
-		t.Errorf("API key mismatch after rotation: expected %s, got %s", provider.APIKey, retrievedAfter.APIKey)
+		t.Errorf("API key mismatch after failed rotation: expected %s, got %s", provider.APIKey, retrievedAfter.APIKey)
+	}
+	if retrievedAfter.KeyVersion != initialVersion {
+		t.Errorf("key version changed after failed rotation: was %d, now %d", initialVersion, retrievedAfter.KeyVersion)
 	}
 
-	// Verify key version was updated
-	if retrievedAfter.KeyVersion <= initialVersion {
-		t.Errorf("Expected KeyVersion to increase after rotation: was %d, now %d", initialVersion, retrievedAfter.KeyVersion)
-	}
-
-	// Verify key versions info updated
 	versionsAfter := repo.GetKeyVersions()
-	if len(versionsAfter) <= len(versionsBefore) {
-		t.Errorf("Expected more key versions after rotation: before %d, after %d", len(versionsBefore), len(versionsAfter))
-	}
-
-	// Verify old key is archived
-	oldKeyFound := false
-	for version, info := range versionsAfter {
-		if version == initialVersion {
-			infoMap, ok := info.(map[string]string)
-			if !ok {
-				continue
-			}
-			if infoMap["status"] == "archived" {
-				oldKeyFound = true
-				break
-			}
-		}
-	}
-	if !oldKeyFound {
-		t.Errorf("Expected old key version to be archived")
+	if len(versionsAfter) != len(versionsBefore) {
+		t.Errorf("key versions changed after failed rotation: before %d, after %d", len(versionsBefore), len(versionsAfter))
 	}
 }
 

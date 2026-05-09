@@ -29,17 +29,13 @@ COPY --from=backend-builder /app/config ./config/
 # Copy frontend dist
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist/
 
-# Create data directory with correct ownership
-RUN mkdir -p data && chown -R app:app /app
+# Ensure runtime files are owned by the non-root user.
+RUN chown -R app:app /app
 
 ENV CONFIG_PATH=/app/config/default.json
-ENV STATE_PATH=/app/data/state.json
-ENV DATA_DIR=/app/data
 ENV FRONTEND_DIR=/app/frontend/dist
 
 USER app
 EXPOSE 8080
 
-# Run healthops and tee stdout to a log file for the log freshness check
-# stdbuf ensures unbuffered output so the log file stays fresh
-CMD ["sh", "-c", "exec ./healthops 2>&1 | tee -a /app/data/healthops.log"]
+CMD ["./healthops"]

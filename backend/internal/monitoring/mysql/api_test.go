@@ -6,13 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"medics-health-check/backend/internal/monitoring"
-	"medics-health-check/backend/internal/monitoring/ai"
-	"medics-health-check/backend/internal/monitoring/notify"
 )
 
 // decodeAPIResponse unmarshals an APIResponse envelope.
@@ -38,26 +35,26 @@ func decodeAPIResponseData(body []byte, v interface{}) error {
 	return json.Unmarshal(dataBytes, v)
 }
 
-func newTestMySQLAPIHandler(t *testing.T) (*MySQLAPIHandler, *FileMySQLRepository) {
+func newTestMySQLAPIHandler(t *testing.T) (*MySQLAPIHandler, *memoryMySQLRepository) {
 	t.Helper()
 	dir := t.TempDir()
 
-	mysqlRepo, err := NewFileMySQLRepository(dir)
+	mysqlRepo, err := newMemoryMySQLRepository(dir)
 	if err != nil {
 		t.Fatalf("create mysql repo: %v", err)
 	}
 
-	snapshotRepo, err := monitoring.NewFileSnapshotRepository(filepath.Join(dir, "snapshots.jsonl"))
+	snapshotRepo, err := newMemorySnapshotRepository(dir)
 	if err != nil {
 		t.Fatalf("create snapshot repo: %v", err)
 	}
 
-	outbox, err := notify.NewFileNotificationOutbox(filepath.Join(dir, "outbox.jsonl"))
+	outbox, err := newMemoryNotificationOutbox(dir)
 	if err != nil {
 		t.Fatalf("create outbox: %v", err)
 	}
 
-	aiQueue, err := ai.NewFileAIQueue(dir)
+	aiQueue, err := newMemoryAIQueue(dir)
 	if err != nil {
 		t.Fatalf("create ai queue: %v", err)
 	}
@@ -165,7 +162,7 @@ func TestIncidentSnapshotsEndpoint_GET(t *testing.T) {
 	handler, _ := newTestMySQLAPIHandler(t)
 
 	// Save some snapshots via the underlying repo
-	snapshotRepo := handler.snapshotRepo.(*monitoring.FileSnapshotRepository)
+	snapshotRepo := handler.snapshotRepo.(*memorySnapshotRepository)
 	_ = snapshotRepo.SaveSnapshots("inc-1", []monitoring.IncidentSnapshot{
 		{SnapshotType: "latest_sample", Timestamp: time.Now().UTC(), PayloadJSON: `{"test":1}`},
 	})
@@ -183,7 +180,7 @@ func TestNotificationsEndpoint_GET(t *testing.T) {
 	handler, _ := newTestMySQLAPIHandler(t)
 
 	// Enqueue a notification
-	outbox := handler.outbox.(*notify.FileNotificationOutbox)
+	outbox := handler.outbox.(*memoryNotificationOutbox)
 	_ = outbox.Enqueue(monitoring.NotificationEvent{
 		NotificationID: "notif-1",
 		IncidentID:     "inc-1",
@@ -221,7 +218,7 @@ func TestNotificationSentEndpoint_WithAuth(t *testing.T) {
 	handler, _ := newTestMySQLAPIHandler(t)
 
 	// Enqueue first
-	outbox := handler.outbox.(*notify.FileNotificationOutbox)
+	outbox := handler.outbox.(*memoryNotificationOutbox)
 	_ = outbox.Enqueue(monitoring.NotificationEvent{
 		NotificationID: "notif-1",
 		IncidentID:     "inc-1",
@@ -241,7 +238,7 @@ func TestNotificationSentEndpoint_WithAuth(t *testing.T) {
 func TestNotificationFailedEndpoint_WithAuth(t *testing.T) {
 	handler, _ := newTestMySQLAPIHandler(t)
 
-	outbox := handler.outbox.(*notify.FileNotificationOutbox)
+	outbox := handler.outbox.(*memoryNotificationOutbox)
 	_ = outbox.Enqueue(monitoring.NotificationEvent{
 		NotificationID: "notif-1",
 		IncidentID:     "inc-1",

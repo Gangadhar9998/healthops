@@ -448,35 +448,6 @@ func TestNotificationChannelStore(t *testing.T) {
 		}
 	})
 
-	t.Run("persistence across store instances", func(t *testing.T) {
-		dir := t.TempDir()
-		store1, err := NewNotificationChannelStore(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		ch := NotificationChannelConfig{
-			ID:         "persist-1",
-			Name:       "persistent",
-			Type:       ChannelWebhook,
-			WebhookURL: "https://h.com",
-		}
-		if err := store1.Create(ch); err != nil {
-			t.Fatal(err)
-		}
-
-		// Create a second store from the same directory
-		store2, err := NewNotificationChannelStore(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		list := store2.List()
-		if len(list) != 1 {
-			t.Fatalf("expected 1 channel in new store, got %d", len(list))
-		}
-		if list[0].Name != "persistent" {
-			t.Errorf("Name = %q, want %q", list[0].Name, "persistent")
-		}
-	})
 }
 
 // ---------------------------------------------------------------------------

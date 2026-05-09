@@ -578,7 +578,6 @@ func TestGETStatusContract(t *testing.T) {
 // TestGETIncidentsContract verifies GET /api/v1/incidents returns Incident array
 func TestGETIncidentsContract(t *testing.T) {
 	// Create fake incident manager
-	_, _ = NewFileAuditRepository("") // Create audit directory
 	incidentRepo := NewMemoryIncidentRepository()
 	incidentManager := NewIncidentManager(incidentRepo, nil)
 
@@ -685,7 +684,6 @@ func TestGETIncidentsContract(t *testing.T) {
 
 // TestPOSTIncidentAcknowledgeContract verifies POST /api/v1/incidents/{id}/acknowledge
 func TestPOSTIncidentAcknowledgeContract(t *testing.T) {
-	_, _ = NewFileAuditRepository("")
 	incidentRepo := NewMemoryIncidentRepository()
 	incidentManager := NewIncidentManager(incidentRepo, nil)
 
@@ -755,7 +753,6 @@ func TestPOSTIncidentAcknowledgeContract(t *testing.T) {
 
 // TestPOSTIncidentResolveContract verifies POST /api/v1/incidents/{id}/resolve
 func TestPOSTIncidentResolveContract(t *testing.T) {
-	_, _ = NewFileAuditRepository("")
 	incidentRepo := NewMemoryIncidentRepository()
 	incidentManager := NewIncidentManager(incidentRepo, nil)
 
@@ -829,7 +826,7 @@ func TestPOSTIncidentResolveContract(t *testing.T) {
 // TestGETAuditContract verifies GET /api/v1/audit returns AuditEvent array with filters
 func TestGETAuditContract(t *testing.T) {
 	discardLogger := log.New(io.Discard, "", 0)
-	auditRepo, _ := NewFileAuditRepository("")
+	auditRepo := &InMemoryAuditRepository{events: []AuditEvent{}}
 	auditLogger := NewAuditLogger(auditRepo, discardLogger)
 
 	// Create test audit events
@@ -962,7 +959,7 @@ func TestGETAuditWithFiltersContract(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create fresh audit repo for each test - use discard logger to avoid noise
-			auditRepo, _ := NewFileAuditRepository("")
+			auditRepo := &InMemoryAuditRepository{events: []AuditEvent{}}
 			discardLogger := log.New(io.Discard, "", 0)
 			auditLogger := NewAuditLogger(auditRepo, discardLogger)
 

@@ -225,6 +225,15 @@ func (s *Service) safeConfigView() SafeConfigView {
 func (s *Service) handleAlertRules(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		if s.alertRuleRepo != nil {
+			rules, err := s.alertRuleRepo.List(r.Context())
+			if err != nil {
+				WriteAPIError(w, http.StatusInternalServerError, err)
+				return
+			}
+			WriteAPIResponse(w, http.StatusOK, NewAPIResponse(rules))
+			return
+		}
 		rules := s.alertEngine.Rules()
 		WriteAPIResponse(w, http.StatusOK, NewAPIResponse(rules))
 	case http.MethodPost:
@@ -251,7 +260,15 @@ func (s *Service) handleAlertRuleCreate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	s.alertEngine.AddRule(rule)
+	if s.alertRuleRepo != nil {
+		if err := s.alertRuleRepo.Create(r.Context(), &rule); err != nil {
+			WriteAPIError(w, http.StatusBadRequest, err)
+			return
+		}
+	}
+	if s.alertEngine != nil {
+		s.alertEngine.AddRule(rule)
+	}
 
 	if s.auditLogger != nil {
 		actor := ExtractActorFromRequest(r, s.cfg)
@@ -285,9 +302,20 @@ func (s *Service) handleAlertRuleByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Service) handleAlertRuleGet(w http.ResponseWriter, _ *http.Request, id string) {
+func (s *Service) handleAlertRuleGet(w http.ResponseWriter, r *http.Request, id string) {
 	if s.alertEngine == nil {
-		WriteAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("alert engine not configured"))
+		if s.alertRuleRepo == nil {
+			WriteAPIError(w, http.StatusServiceUnavailable, fmt.Errorf("alert engine not configured"))
+			return
+		}
+	}
+	if s.alertRuleRepo != nil {
+		rule, err := s.alertRuleRepo.Get(r.Context(), id)
+		if err != nil {
+			WriteAPIError(w, http.StatusNotFound, err)
+			return
+		}
+		WriteAPIResponse(w, http.StatusOK, NewAPIResponse(rule))
 		return
 	}
 	rule, err := s.alertEngine.GetRule(id)
@@ -311,9 +339,16 @@ func (s *Service) handleAlertRuleUpdate(w http.ResponseWriter, r *http.Request, 
 	}
 
 	rule.ID = id // ensure path ID takes precedence
-	if err := s.alertEngine.UpdateRule(rule); err != nil {
-		WriteAPIError(w, http.StatusNotFound, err)
-		return
+	if s.alertRuleRepo != nil {
+		if err := s.alertRuleRepo.Update(r.Context(), id, &rule); err != nil {
+			WriteAPIError(w, http.StatusNotFound, err)
+			return
+		}
+	}
+	if s.alertEngine != nil {
+		if err := s.alertEngine.UpdateRule(rule); err != nil {
+			s.alertEngine.AddRule(rule)
+		}
 	}
 
 	if s.auditLogger != nil {
@@ -333,9 +368,17 @@ func (s *Service) handleAlertRuleDelete(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	if err := s.alertEngine.DeleteRule(id); err != nil {
-		WriteAPIError(w, http.StatusNotFound, err)
-		return
+	if s.alertRuleRepo != nil {
+		if err := s.alertRuleRepo.Delete(r.Context(), id); err != nil {
+			WriteAPIError(w, http.StatusNotFound, err)
+			return
+		}
+	}
+	if s.alertEngine != nil {
+		if err := s.alertEngine.DeleteRule(id); err != nil && s.alertRuleRepo == nil {
+			WriteAPIError(w, http.StatusNotFound, err)
+			return
+		}
 	}
 
 	if s.auditLogger != nil {

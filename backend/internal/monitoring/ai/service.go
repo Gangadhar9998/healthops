@@ -19,7 +19,7 @@ type AIService struct {
 	mu sync.RWMutex
 
 	configStore  AIConfigStoreInterface
-	aiQueue      *FileAIQueue
+	aiQueue      AIQueueRepository
 	incidentRepo monitoring.IncidentRepository
 	snapshotRepo monitoring.IncidentSnapshotRepository
 	store        monitoring.Store // for check results
@@ -34,7 +34,7 @@ type AIService struct {
 // NewAIService creates the AI orchestrator.
 func NewAIService(
 	configStore AIConfigStoreInterface,
-	aiQueue *FileAIQueue,
+	aiQueue AIQueueRepository,
 	incidentRepo monitoring.IncidentRepository,
 	snapshotRepo monitoring.IncidentSnapshotRepository,
 	store monitoring.Store,

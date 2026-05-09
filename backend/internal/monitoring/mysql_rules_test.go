@@ -319,7 +319,6 @@ func TestMySQLRuleEngine_ZeroMaxConnections(t *testing.T) {
 }
 
 func TestMySQLRuleEngine_StatePersistence(t *testing.T) {
-	dir := t.TempDir()
 	rules := []AlertRule{
 		{
 			ID: "persist", Name: "Persist", Enabled: true,
@@ -329,13 +328,14 @@ func TestMySQLRuleEngine_StatePersistence(t *testing.T) {
 	}
 
 	// Create engine and accumulate 2 breaches
-	engine1, _ := NewMySQLRuleEngine(rules, dir)
+	store := newFakeMySQLRuleStateStore()
+	engine1, _ := NewMySQLRuleEngineWithStateStore(rules, store)
 	sample := MySQLSample{Connections: 80, MaxConnections: 100}
 	engine1.Evaluate("mysql-1", sample, nil) // breach 1
 	engine1.Evaluate("mysql-1", sample, nil) // breach 2
 
-	// Reload from disk — state should survive
-	engine2, err := NewMySQLRuleEngine(rules, dir)
+	// Reload from durable store — state should survive
+	engine2, err := NewMySQLRuleEngineWithStateStore(rules, store)
 	if err != nil {
 		t.Fatalf("reload engine: %v", err)
 	}
@@ -345,6 +345,35 @@ func TestMySQLRuleEngine_StatePersistence(t *testing.T) {
 	if len(results) != 1 || results[0].Action != "open" {
 		t.Fatal("expected open on 3rd breach after state reload")
 	}
+}
+
+type fakeMySQLRuleStateStore struct {
+	states map[string]*AlertState
+}
+
+func newFakeMySQLRuleStateStore() *fakeMySQLRuleStateStore {
+	return &fakeMySQLRuleStateStore{states: make(map[string]*AlertState)}
+}
+
+func (s *fakeMySQLRuleStateStore) LoadStates() (map[string]*AlertState, error) {
+	return cloneAlertStates(s.states), nil
+}
+
+func (s *fakeMySQLRuleStateStore) SaveStates(states map[string]*AlertState) error {
+	s.states = cloneAlertStates(states)
+	return nil
+}
+
+func cloneAlertStates(in map[string]*AlertState) map[string]*AlertState {
+	out := make(map[string]*AlertState, len(in))
+	for key, state := range in {
+		if state == nil {
+			continue
+		}
+		copy := *state
+		out[key] = &copy
+	}
+	return out
 }
 
 func TestDefaultMySQLRules(t *testing.T) {

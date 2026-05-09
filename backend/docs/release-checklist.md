@@ -57,7 +57,7 @@ Evidence: 2026-04-18 FAIL (environment): Docker daemon unavailable (`/Users/sai/
 Evidence: 2026-04-18 FAIL (environment): Cannot connect to Docker daemon.
 
 - [x] `.env.example` validated against runtime config
-Evidence: File exists and includes server/auth/scheduler/security keys used by runtime (`SERVER_ADDR`, `STATE_PATH`, `AUTH_*`, `CHECK_INTERVAL_SECONDS`, `ALLOW_COMMAND_CHECKS`).
+Evidence: Environment docs cover required MongoDB and secret keys (`MONGODB_URI`, `MONGODB_DATABASE`, `MONGODB_COLLECTION_PREFIX`, `HEALTHOPS_JWT_SECRET`, `HEALTHOPS_AI_ENCRYPTION_KEY`, `HEALTHOPS_BOOTSTRAP_ADMIN_PASSWORD`).
 
 - [x] Runbook reviewed: `docs/runbook.md`
 Evidence: Reviewed during gate run on 2026-04-18.

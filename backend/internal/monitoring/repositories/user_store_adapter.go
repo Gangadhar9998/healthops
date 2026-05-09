@@ -8,18 +8,6 @@ import (
 	"medics-health-check/backend/internal/monitoring"
 )
 
-// NewMongoDBUserStore creates a MongoDB-backed UserStore that wraps MongoUserRepository
-// It returns a *monitoring.UserStore that delegates all operations to MongoDB via the adapter
-func NewMongoDBUserStore(repo *MongoUserRepository) (*monitoring.UserStore, error) {
-	if repo == nil {
-		return nil, fmt.Errorf("mongo repository cannot be nil")
-	}
-
-	// The actual implementation will be done via a separate delegating type
-	// For now, we need to use the adapter pattern more carefully
-	return nil, fmt.Errorf("NewMongoDBUserStore: please use NewUserStoreAdapter for now")
-}
-
 // UserStoreAdapter adapts MongoUserRepository to work with monitoring.UserStoreBackend.
 type UserStoreAdapter struct {
 	repo *MongoUserRepository

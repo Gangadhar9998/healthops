@@ -4,12 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"medics-health-check/backend/internal/monitoring"
-	"medics-health-check/backend/internal/monitoring/ai"
 	"medics-health-check/backend/internal/monitoring/notify"
 )
 
@@ -95,28 +93,28 @@ func TestE2E_MySQLIncidentLifecycle(t *testing.T) {
 	// --- Set up repositories ---
 	t.Log("Step 1: Create all repositories and engines")
 
-	mysqlRepo, err := NewFileMySQLRepository(filepath.Join(tmpDir, "mysql"))
+	mysqlRepo, err := newMemoryMySQLRepository(tmpDir)
 	if err != nil {
-		t.Fatalf("NewFileMySQLRepository: %v", err)
+		t.Fatalf("newMemoryMySQLRepository: %v", err)
 	}
 
-	snapRepo, err := monitoring.NewFileSnapshotRepository(filepath.Join(tmpDir, "snapshots", "snapshots.jsonl"))
+	snapRepo, err := newMemorySnapshotRepository(tmpDir)
 	if err != nil {
-		t.Fatalf("NewFileSnapshotRepository: %v", err)
+		t.Fatalf("newMemorySnapshotRepository: %v", err)
 	}
 
-	outbox, err := notify.NewFileNotificationOutbox(filepath.Join(tmpDir, "outbox", "outbox.jsonl"))
+	outbox, err := newMemoryNotificationOutbox(tmpDir)
 	if err != nil {
-		t.Fatalf("NewFileNotificationOutbox: %v", err)
+		t.Fatalf("newMemoryNotificationOutbox: %v", err)
 	}
 
-	aiQueue, err := ai.NewFileAIQueue(filepath.Join(tmpDir, "ai"))
+	aiQueue, err := newMemoryAIQueue(tmpDir)
 	if err != nil {
-		t.Fatalf("NewFileAIQueue: %v", err)
+		t.Fatalf("newMemoryAIQueue: %v", err)
 	}
 
 	rules := monitoring.DefaultMySQLRules()
-	ruleEngine, err := monitoring.NewMySQLRuleEngine(rules, filepath.Join(tmpDir, "rules"))
+	ruleEngine, err := monitoring.NewMySQLRuleEngine(rules, "")
 	if err != nil {
 		t.Fatalf("NewMySQLRuleEngine: %v", err)
 	}
@@ -454,8 +452,6 @@ func TestE2E_MySQLRuleStreaks(t *testing.T) {
 
 	for _, sc := range scenarios {
 		t.Run(sc.ruleCode, func(t *testing.T) {
-			tmpDir := t.TempDir()
-
 			// Create engine with ONLY this rule enabled
 			var targetRule monitoring.AlertRule
 			for _, r := range monitoring.DefaultMySQLRules() {
@@ -469,7 +465,7 @@ func TestE2E_MySQLRuleStreaks(t *testing.T) {
 			}
 			singleRuleSet := []monitoring.AlertRule{targetRule}
 
-			engine, err := monitoring.NewMySQLRuleEngine(singleRuleSet, filepath.Join(tmpDir, "rules"))
+			engine, err := monitoring.NewMySQLRuleEngine(singleRuleSet, "")
 			if err != nil {
 				t.Fatalf("NewMySQLRuleEngine: %v", err)
 			}
